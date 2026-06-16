@@ -387,6 +387,19 @@ const CLIENT_CONFIG = _RAW_CLIENT_CONFIG || {
       opportunity_expiry_days: 90,
     },
   },
+  analyticsWidgets: (function() {
+    // Auto-generate widgets from default fields
+    const numericFields = ['wallet','ff_net','card_spend','comp','card_balance','txn_count','days_since','consecutive_payroll_months'];
+    const stringFields = ['country','contract_type','contract_state','engagement_level','account_type','recent_activity_bucket','consistency_bucket'];
+    const widgets = [];
+    numericFields.forEach(f => {
+      widgets.push({ type:'auto_sum_'+f, label: f.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())+' by Country', category:'Overview', x_field:'country', y_field:f, y_label:f, aggregation:'sum', chart_type:'bar', description:'Sum of '+f+' grouped by country' });
+    });
+    stringFields.forEach(f => {
+      widgets.push({ type:'auto_count_'+f, label:'Breakdown by '+f.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()), category:'Overview', x_field:f, y_field:'count', y_label:'Count', aggregation:'count', chart_type:'bar', description:'Count of records grouped by '+f });
+    });
+    return widgets;
+  })(),
 };
 
 // ─── FINANCIAL DATA LOOKUP ─────────────────────────────────────────────────
@@ -1383,6 +1396,9 @@ function ClientSetupWizard() {
   const [logoUrl, setLogoUrl] = React.useState('');
   const [allowedDomain, setAllowedDomain] = React.useState('');
   const [err, setErr] = React.useState('');
+  const [step, setStep] = React.useState(1);
+  const allWidgets = getAnalyticsWidgets();
+  const [checkedWidgetIndices, setCheckedWidgetIndices] = React.useState(() => new Set(allWidgets.map((_, i) => i)));
 
   const S = {
     overlay: { minHeight:'100vh', background:'linear-gradient(135deg,#000000,#291960)', display:'flex', alignItems:'center', justifyContent:'center', padding:24 },
@@ -1398,12 +1414,15 @@ function ClientSetupWizard() {
   function handleSave() {
     if (!brandName.trim()) { setErr('Brand name is required.'); return; }
     if (!allowedDomain.trim()) { setErr('Allowed email domain is required (e.g. company.com).'); return; }
+    const allWidgets = getAnalyticsWidgets();
+    const checkedWidgets = allWidgets.filter((_, i) => checkedWidgetIndices.has(i));
     const config = {
       brand: { name: brandName.trim(), primaryColor, logoUrl: logoUrl.trim(), allowedDomain: allowedDomain.trim().replace(/^@/,'') },
       fields: CLIENT_CONFIG.fields,
       products: CLIENT_CONFIG.products,
       sellingFactors: CLIENT_CONFIG.sellingFactors,
       unitEconomics: CLIENT_CONFIG.unitEconomics,
+      analyticsWidgets: checkedWidgets.length > 0 ? checkedWidgets : allWidgets,
     };
     try { localStorage.setItem('CRM_CLIENT_CONFIG', JSON.stringify(config)); } catch(e2) {}
     window.location.reload();
@@ -1432,7 +1451,40 @@ function ClientSetupWizard() {
         </div>
 
         {err && <p style={S.errStyle}>{err}</p>}
-        <button style={S.btn} onClick={handleSave}>Save &amp; Launch CRM</button>
+        {step === 1 && (
+          <button style={S.btn} onClick={() => {
+            if (!brandName.trim()) { setErr('Brand name is required.'); return; }
+            if (!allowedDomain.trim()) { setErr('Allowed email domain is required (e.g. company.com).'); return; }
+            setErr('');
+            setStep(2);
+          }}>Next: Analytics Widgets</button>
+        )}
+        {step === 2 && (
+          <div>
+            <div style={{color:'rgba(255,255,255,0.7)',fontSize:12,fontWeight:600,marginBottom:8,fontFamily:'Poppins,sans-serif'}}>Analytics Widgets</div>
+            <p style={{color:'rgba(255,255,255,0.5)',fontSize:12,marginBottom:12,fontFamily:'Poppins,sans-serif'}}>These widgets will appear in your Analytics dashboard, powered by your data file. Deselect any you don&apos;t need.</p>
+            <div style={{display:'flex',gap:8,marginBottom:10}}>
+              <button onClick={()=>setCheckedWidgetIndices(new Set(allWidgets.map((_,i)=>i)))} style={{fontSize:11,padding:'4px 10px',borderRadius:6,background:'rgba(122,80,247,0.3)',border:'1px solid rgba(122,80,247,0.5)',color:'#fff',cursor:'pointer',fontFamily:'Poppins,sans-serif'}}>Select all</button>
+              <button onClick={()=>setCheckedWidgetIndices(new Set())} style={{fontSize:11,padding:'4px 10px',borderRadius:6,background:'rgba(122,80,247,0.3)',border:'1px solid rgba(122,80,247,0.5)',color:'#fff',cursor:'pointer',fontFamily:'Poppins,sans-serif'}}>Deselect all</button>
+            </div>
+            <div style={{maxHeight:240,overflowY:'auto',background:'rgba(88,86,183,0.1)',borderRadius:10,padding:'8px 12px',border:'1px solid rgba(122,80,247,0.2)',marginBottom:16}}>
+              {allWidgets.map((w, i) => (
+                <label key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',cursor:'pointer',fontFamily:'Poppins,sans-serif',fontSize:12,color:'rgba(255,255,255,0.8)'}}>
+                  <input type="checkbox" checked={checkedWidgetIndices.has(i)} onChange={e => {
+                    const next = new Set(checkedWidgetIndices);
+                    e.target.checked ? next.add(i) : next.delete(i);
+                    setCheckedWidgetIndices(next);
+                  }} style={{accentColor:'#602DF5'}} />
+                  {w.label}
+                </label>
+              ))}
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button style={{...S.btn,background:'rgba(88,86,183,0.3)',marginTop:0,width:'auto',padding:'12px 24px'}} onClick={()=>setStep(1)}>Back</button>
+              <button style={{...S.btn,marginTop:0,flex:1}} onClick={handleSave}>Get started</button>
+            </div>
+          </div>
+        )}
 
         <p style={{color:'rgba(255,255,255,0.25)',fontSize:11,textAlign:'center',marginTop:16,fontFamily:'Poppins,sans-serif'}}>
           Settings stored in localStorage. Advanced config (products, fields, selling factors) can be set via <code style={{background:'rgba(122,80,247,0.2)',padding:'1px 4px',borderRadius:4}}>window.CRM_CLIENT_CONFIG</code> before page load.
@@ -3560,27 +3612,27 @@ function WidgetCard({ widget, onRemove, editMode, users }) {
   );
 }
 
-function OnsightWidgetCard({ widget, onRemove, editMode, onCreateAudience }) {
-  const catalog = ONSIGHT_WIDGET_CATALOG.find(w => w.type === widget.type) || widget;
+function OnsightWidgetCard({ widget, onDrillDown, refreshKey }) {
   const [data, setData] = React.useState([]);
-  const [chartType, setChartType] = React.useState(widget.chart_type || catalog?.chart_type || 'bar');
+  const [viewMode, setViewMode] = React.useState(widget.chart_type || 'bar');
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
     setLoading(true);
     try {
-      const agg = catalog?.aggregation || 'count';
-      const xField = catalog?.x_field || 'country';
-      const yField = catalog?.y_field || '_count';
+      const agg = widget.aggregation || 'count';
+      const xField = widget.x_field;
+      const yField = widget.y_field;
       const groups = {};
 
       for (const [, fin] of CONTRACTOR_MAP) {
-        const key = String(fin[xField] !== undefined && fin[xField] !== null ? fin[xField] : '(none)');
-        if (!groups[key]) groups[key] = { _count: 0, _sum: 0, _truthy: 0 };
+        const key = String(fin[xField] || '(none)');
+        if (!groups[key]) groups[key] = { _count: 0, _sum: 0, _values: [] };
         groups[key]._count += 1;
         const numVal = Number(fin[yField]) || 0;
         groups[key]._sum += numVal;
-        if (fin[yField]) groups[key]._truthy += 1;
+        groups[key]._values.push(numVal);
+        if (agg === 'rate' && fin[yField]) groups[key]._truthy = (groups[key]._truthy || 0) + 1;
       }
 
       const rows = Object.entries(groups).map(([k, g]) => {
@@ -3588,125 +3640,75 @@ function OnsightWidgetCard({ widget, onRemove, editMode, onCreateAudience }) {
         if (agg === 'count') yVal = g._count;
         else if (agg === 'sum') yVal = Math.round(g._sum * 100) / 100;
         else if (agg === 'avg') yVal = g._count > 0 ? Math.round(g._sum / g._count * 100) / 100 : 0;
-        else if (agg === 'rate') yVal = g._count > 0 ? Math.round(g._truthy / g._count * 10000) / 100 : 0;
+        else if (agg === 'rate') yVal = g._count > 0 ? Math.round((g._truthy || 0) / g._count * 10000) / 100 : 0;
         else yVal = g._count;
-        const row = {};
-        row[xField] = k;
-        row[yField === '_count' ? 'count' : yField] = yVal;
-        row['_count'] = g._count;
-        return row;
+        return { [xField]: k, [yField === 'count' ? 'count' : yField]: yVal, _count: g._count };
       });
 
-      const displayKey = yField === '_count' ? 'count' : yField;
-      rows.sort((a, b) => (b[displayKey] || 0) - (a[displayKey] || 0));
+      rows.sort((a, b) => (b[yField === 'count' ? 'count' : yField] || 0) - (a[yField === 'count' ? 'count' : yField] || 0));
       setData(rows.slice(0, 25));
     } catch(e) {
-      console.warn('OnsightWidgetCard error:', e);
+      console.warn('AnalyticsWidgetCard error:', e);
       setData([]);
     }
     setLoading(false);
-  }, [widget.type]);
+  }, [widget.type, refreshKey]);
 
-  const xField = catalog?.x_field || 'country';
-  const yField = catalog?.y_field || '_count';
-  const displayKey = yField === '_count' ? 'count' : yField;
-  const yLabel = catalog?.y_label || 'Count';
-  const isDrillable = !!catalog?.drill_down_field && !!onCreateAudience;
-
-  function handleChartClick(barData) {
-    if (!isDrillable) return;
-    const drillValue = barData[catalog.drill_down_field] ?? barData[xField];
-    if (drillValue === undefined || drillValue === null) return;
-    const filterRules = [
-      { field: catalog.drill_down_field, operator: catalog.drill_down_operator || '=', value: String(drillValue) },
-      ...(catalog.drill_down_extra_rules || []),
-    ];
-    onCreateAudience({ name: `${drillValue} — ${catalog.label}`, filter_rules: filterRules, audience_type: 'dynamic', description: `Created from dashboard: ${catalog.label}` });
-  }
-
-  function fmtVal(v) {
-    if (typeof v !== 'number') return v ?? '—';
-    if (v >= 1000000) return `${(v/1000000).toFixed(1)}M`;
-    if (v >= 1000) return `${(v/1000).toFixed(0)}K`;
-    if (v % 1 !== 0) return v.toFixed(1);
-    return v.toLocaleString();
-  }
+  const yKey = widget.y_field === 'count' ? 'count' : widget.y_field;
 
   return (
-    <div style={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:12,padding:16,position:'relative',gridColumn:'span 2',minHeight:280}}>
-      {editMode && (
-        <button onClick={()=>onRemove(widget.id)} style={{position:'absolute',top:8,right:8,background:'#FEE2E2',border:'none',borderRadius:999,width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'#EF4444',zIndex:2,lineHeight:1}}>✕</button>
-      )}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <span style={{fontSize:16}}>{catalog?.icon||'📊'}</span>
-          <div>
-            <div style={{fontSize:12,fontWeight:600,color:'#1A1630'}}>{widget.title||catalog?.label}</div>
-            {catalog?.description && <div style={{fontSize:10,color:'#B8B4D4'}}>{catalog.description}</div>}
-          </div>
+    <div className="card p-4" style={{minHeight:220}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+        <div>
+          <div style={{fontWeight:600,fontSize:13,color:'var(--text-primary)'}}>{widget.label}</div>
+          {widget.description && <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>{widget.description}</div>}
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:4}}>
-          <button onClick={()=>setChartType('bar')} style={{fontSize:10,padding:'2px 8px',borderRadius:6,border:'none',cursor:'pointer',background:chartType==='bar'?'#602DF5':'#F0EEF8',color:chartType==='bar'?'#fff':'#9590C0'}}>▊</button>
-          <button onClick={()=>setChartType('table')} style={{fontSize:10,padding:'2px 8px',borderRadius:6,border:'none',cursor:'pointer',background:chartType==='table'?'#602DF5':'#F0EEF8',color:chartType==='table'?'#fff':'#9590C0'}}>☰</button>
+        <div style={{display:'flex',gap:4}}>
+          <button onClick={()=>setViewMode('bar')} style={{fontSize:11,padding:'2px 8px',borderRadius:6,border:'0.5px solid var(--border-default)',background:viewMode==='bar'?'#602DF5':'var(--bg-subtle)',color:viewMode==='bar'?'#fff':'var(--text-secondary)',cursor:'pointer'}}>Chart</button>
+          <button onClick={()=>setViewMode('table')} style={{fontSize:11,padding:'2px 8px',borderRadius:6,border:'0.5px solid var(--border-default)',background:viewMode==='table'?'#602DF5':'var(--bg-subtle)',color:viewMode==='table'?'#fff':'var(--text-secondary)',cursor:'pointer'}}>Table</button>
         </div>
       </div>
 
-      {isDrillable && data.length > 0 && (
-        <div style={{fontSize:10,color:'#9590C0',marginBottom:8}}>✨ Click any bar to create an audience</div>
-      )}
-
       {loading ? (
-        <div style={{height:160,display:'flex',alignItems:'center',justifyContent:'center',color:'#B8B4D4',fontSize:12}}>Loading…</div>
+        <div style={{height:140,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
       ) : data.length === 0 ? (
-        <div style={{height:160,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8,color:'#B8B4D4'}}>
-          <span style={{fontSize:28}}>📊</span>
-          <span style={{fontSize:12}}>No data available</span>
-        </div>
-      ) : chartType === 'table' ? (
-        <div style={{overflowX:'auto',maxHeight:220}}>
-          <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+        <div style={{height:140,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:12}}>No data available</div>
+      ) : viewMode === 'bar' ? (
+        <ResponsiveContainer width="100%" height={160}>
+          <BarChart data={data} margin={{top:4,right:8,left:0,bottom:24}}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+            <XAxis dataKey={widget.x_field} tick={{fontSize:10,fill:'var(--text-secondary)'}} angle={-30} textAnchor="end" interval={0} />
+            <YAxis tick={{fontSize:10,fill:'var(--text-secondary)'}} />
+            <RTooltip contentStyle={{background:'#fff',border:'0.5px solid var(--border-strong)',borderRadius:8,fontSize:12}} />
+            <Bar dataKey={yKey} fill="#602DF5" radius={[4,4,0,0]}
+              onClick={widget.drill_down_field ? (entry) => onDrillDown && onDrillDown(widget, entry) : undefined}
+              style={widget.drill_down_field ? {cursor:'pointer'} : {}}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <div style={{overflowX:'auto',maxHeight:180}}>
+          <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
             <thead>
-              <tr>
-                <th style={{textAlign:'left',padding:'6px 8px',color:'#9590C0',fontSize:10,borderBottom:'0.5px solid #E2DFEF',fontWeight:600}}>{xField.replace(/_/g,' ')}</th>
-                <th style={{textAlign:'right',padding:'6px 8px',color:'#9590C0',fontSize:10,borderBottom:'0.5px solid #E2DFEF',fontWeight:600}}>{yLabel}</th>
-                {isDrillable && <th style={{width:90,borderBottom:'0.5px solid #E2DFEF'}} />}
+              <tr style={{borderBottom:'0.5px solid var(--border-default)'}}>
+                <th style={{textAlign:'left',padding:'4px 8px',color:'var(--text-secondary)',fontWeight:600}}>{widget.x_field}</th>
+                <th style={{textAlign:'right',padding:'4px 8px',color:'var(--text-secondary)',fontWeight:600}}>{widget.y_label || yKey}</th>
               </tr>
             </thead>
             <tbody>
-              {data.map((row,i)=>(
-                <tr key={i} style={{borderBottom:'0.5px solid #F5F4FA'}}>
-                  <td style={{padding:'7px 8px',color:'#1A1630'}}>{row[xField]}</td>
-                  <td style={{padding:'7px 8px',color:'#1A1630',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{fmtVal(row[displayKey])}</td>
-                  {isDrillable && (
-                    <td style={{padding:'7px 8px'}}>
-                      <button onClick={()=>handleChartClick(row)} style={{fontSize:10,padding:'2px 8px',borderRadius:6,background:'rgba(96,45,245,0.08)',color:'#602DF5',border:'0.5px solid rgba(96,45,245,0.2)',cursor:'pointer',fontFamily:'Poppins,sans-serif'}}>
-                        + Audience
-                      </button>
-                    </td>
-                  )}
+              {data.map((row,i) => (
+                <tr key={i} style={{borderBottom:'0.5px solid var(--border-default)'}}>
+                  <td style={{padding:'4px 8px',color:'var(--text-primary)'}}>{row[widget.x_field]}</td>
+                  <td style={{padding:'4px 8px',color:'var(--text-primary)',textAlign:'right'}}>{row[yKey]?.toLocaleString?.() ?? row[yKey]}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={data.slice(0,20)} margin={{top:4,right:8,bottom:40,left:8}} style={{cursor:isDrillable?'pointer':'default'}}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#E2DFEF" />
-            <XAxis dataKey={xField} tick={{fill:'#9590C0',fontSize:9,fontFamily:'Poppins,sans-serif'}} angle={-35} textAnchor="end" interval={0} axisLine={{stroke:'#E2DFEF'}} tickLine={false} />
-            <YAxis tickFormatter={v=>v>=1e6?`${(v/1e6).toFixed(1)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:String(v)} tick={{fill:'#9590C0',fontSize:9,fontFamily:'Poppins,sans-serif'}} axisLine={false} tickLine={false} width={50} />
-            <RTooltip contentStyle={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:8,fontSize:11,fontFamily:'Poppins,sans-serif'}} formatter={(value)=>[fmtVal(value),yLabel]} labelStyle={{color:'#1A1630',fontWeight:600}} />
-            <Bar dataKey={displayKey} fill="#602DF5" radius={[4,4,0,0]} maxBarSize={40} onClick={isDrillable?handleChartClick:undefined} cursor={isDrillable?'pointer':'default'}>
-              {data.slice(0,20).map((_,i)=><Cell key={i} fill="#602DF5" opacity={0.85+(i%2)*0.15} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
       )}
     </div>
   );
 }
-
-
 function CreateAudienceFromChartModal({ prefill, onClose }) {
   const { saveAudience } = useCRM();
   const nav = useNavigate();
