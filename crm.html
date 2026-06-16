@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title id="crm-page-title">CRM</title>
-  <script src="vendor/tailwind.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -14,19 +14,24 @@
       }}}
     }
   </script>
-  <script src="vendor/react.min.js"></script>
-  <script src="vendor/react-dom.min.js"></script>
-  <script src="vendor/prop-types.min.js"></script>
-  <script src="vendor/remix-router.js"></script>
-  <script src="vendor/react-router.js"></script>
-  <script src="vendor/react-router-dom.js"></script>
-  <script src="vendor/recharts.js"></script>
-  <script src="vendor/supabase.min.js"></script>
-  <script src="vendor/upsell-data.js"></script>
-  <script src="vendor/inactive-data.js"></script>
-  <script src="vendor/contractor-contacts.js"></script>
-  <script src="vendor/crm-config.js"></script>
-  <script src="vendor/babel.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+  <script src="https://unpkg.com/@remix-run/router@1.21.0/dist/router.umd.min.js"></script>
+  <script src="https://unpkg.com/react-router@6.30.0/dist/umd/react-router.production.min.js"></script>
+  <script src="https://unpkg.com/react-router-dom@6.30.0/dist/umd/react-router-dom.production.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.15.3/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- Data files: load from vendor if present, else fall back to empty defaults -->
+  <script>window.UPSELL_DATA=window.UPSELL_DATA||{rows:[]};</script>
+  <script src="vendor/upsell-data.js" onerror="void 0"></script>
+  <script>window.INACTIVE_DATA=window.INACTIVE_DATA||{rows:[]};</script>
+  <script src="vendor/inactive-data.js" onerror="void 0"></script>
+  <script>window.CONTRACTOR_CONTACTS=window.CONTRACTOR_CONTACTS||[];</script>
+  <script src="vendor/contractor-contacts.js" onerror="void 0"></script>
+  <script>window.CRM_CONFIG=window.CRM_CONFIG||{};</script>
+  <script src="vendor/crm-config.js" onerror="void 0"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
   :root {
