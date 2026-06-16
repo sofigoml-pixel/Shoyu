@@ -1277,31 +1277,22 @@ async function syncUserFromSSO(googleSession) {
 
 function AuthGate({ children }) {
   const [session, setSession] = useState(undefined); // undefined=loading
-  const [ssoUser, setSsoUser] = useState(null);       // synced crm_users row
+  const [authUser, setAuthUser] = useState(null);    // synced crm_users row
+  const [mode, setMode] = useState('login');          // 'login' | 'signup'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [signing, setSigning] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   async function handleSession(s) {
-    if (!s) { setSession(null); setSsoUser(null); return; }
-
-    // Domain check only — simple, no provider detection needed
-    if (!s.user?.email?.endsWith('@' + ALLOWED_DOMAIN)) {
-      console.log('[AuthGate] Wrong domain:', s.user?.email);
-      try { SB.auth.signOut(); } catch(e) {}
-      setError(`This tool is for ${CLIENT_CONFIG.brand.name} team members only.`);
-      setSession(null); setSsoUser(null);
-      return;
-    }
-
-    console.log('[AuthGate] Session OK:', s.user?.email);
+    if (!s) { setSession(null); setAuthUser(null); return; }
     window.__ssoEmail = s.user?.email || null;
-    // Expose a promise loadAll can await — resolves once crm_users row is guaranteed to exist
     window.__syncReady = syncUserFromSSO(s).then(crmUser => {
-      setSsoUser(crmUser);
+      setAuthUser(crmUser);
       window.__ssoUser = crmUser;
       return crmUser;
-    }).catch(e => { console.warn('[AuthGate] syncUserFromSSO failed:', e); return null; });
-    setSession(s); // render immediately — loadAll will await __syncReady for user matching
+    }).catch(e => { console.warn('[AuthGate] sync failed:', e); return null; });
+    setSession(s);
   }
 
   useEffect(() => {
@@ -1311,23 +1302,18 @@ function AuthGate({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  async function signInWithGoogle() {
+  async function handleSubmit(e) {
+    e.preventDefault();
     if (!SB) return;
-    setSigning(true);
-    setError('');
-    const { error: err } = await SB.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: CRM_URL,
-        queryParams: {
-          hd: ALLOWED_DOMAIN,        // tells Google to pre-filter to getontop.com accounts
-          access_type: 'offline',
-          prompt: 'select_account',
-        },
-      },
-    });
-    if (err) { setError(err.message); setSigning(false); }
-    // On success, browser navigates away — no need to setSigning(false)
+    setBusy(true); setError('');
+    if (mode === 'login') {
+      const { error: err } = await SB.auth.signInWithPassword({ email, password });
+      if (err) { setError(err.message); setBusy(false); }
+    } else {
+      const { error: err } = await SB.auth.signUp({ email, password });
+      if (err) { setError(err.message); setBusy(false); }
+      else { setError(''); setMode('login'); setPassword(''); setBusy(false); alert('Account created! Check your email to confirm, then sign in.'); }
+    }
   }
 
   async function signOut() {
@@ -1335,22 +1321,20 @@ function AuthGate({ children }) {
     setSession(null);
   }
 
-  const S = { // shared inline styles
+  const S = {
     page: { minHeight:'100vh', background:'linear-gradient(135deg,#000000,#291960)', display:'flex', alignItems:'center', justifyContent:'center', padding:24 },
     card: { background:'rgba(88,86,183,0.08)', border:'1px solid rgba(122,80,247,0.2)', backdropFilter:'blur(20px)', borderRadius:20, maxWidth:380, width:'100%', padding:36 },
-    logo: { width:48, height:48, borderRadius:12, background:'linear-gradient(135deg,#602DF5,#7A50F7)', display:'flex', alignItems:'center', justifyContent:'center', marginBottom:24, boxShadow:'0 0 24px rgba(96,45,245,0.4)' },
     h1: { color:'#FFFFFF', fontSize:22, fontWeight:700, marginBottom:6, fontFamily:'Poppins,sans-serif' },
     sub: { color:'rgba(255,255,255,0.4)', fontSize:13, marginBottom:28, fontFamily:'Poppins,sans-serif' },
-    btn: { width:'100%', padding:'12px 0', borderRadius:999, background:signing?'rgba(122,80,247,0.3)':'linear-gradient(135deg,#602DF5,#7A50F7)', color:'#FFFFFF', fontWeight:600, fontSize:14, border:'none', cursor:signing?'not-allowed':'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:10, boxShadow:'0 0 24px rgba(96,45,245,0.3)', fontFamily:'Poppins,sans-serif', opacity:signing?0.7:1 },
-    err: { color:'#f87171', fontSize:12, marginTop:12, textAlign:'center', fontFamily:'Poppins,sans-serif' },
+    label: { display:'block', color:'rgba(255,255,255,0.6)', fontSize:12, fontWeight:600, marginBottom:6, fontFamily:'Poppins,sans-serif' },
+    input: { width:'100%', padding:'10px 14px', borderRadius:10, background:'rgba(88,86,183,0.15)', border:'1px solid rgba(122,80,247,0.3)', color:'#fff', fontFamily:'Poppins,sans-serif', fontSize:13, marginBottom:16, outline:'none', boxSizing:'border-box' },
+    btn: { width:'100%', padding:'12px 0', borderRadius:999, background:busy?'rgba(122,80,247,0.3)':'linear-gradient(135deg,#602DF5,#7A50F7)', color:'#FFFFFF', fontWeight:600, fontSize:14, border:'none', cursor:busy?'not-allowed':'pointer', fontFamily:'Poppins,sans-serif', opacity:busy?0.7:1, marginTop:4 },
+    err: { color:'#f87171', fontSize:12, marginTop:8, textAlign:'center', fontFamily:'Poppins,sans-serif' },
+    toggle: { color:'rgba(122,80,247,0.9)', fontSize:12, textAlign:'center', marginTop:16, fontFamily:'Poppins,sans-serif', cursor:'pointer', background:'none', border:'none', width:'100%' },
   };
 
   if (session === undefined) {
-    return (
-      <div style={S.page}>
-        <div style={{color:'rgba(255,255,255,0.35)',fontSize:13,fontFamily:'Poppins,sans-serif'}}>Loading…</div>
-      </div>
-    );
+    return <div style={S.page}><div style={{color:'rgba(255,255,255,0.35)',fontSize:13,fontFamily:'Poppins,sans-serif'}}>Loading…</div></div>;
   }
 
   if (!session) {
@@ -1365,33 +1349,30 @@ function AuthGate({ children }) {
                 </div>
             }
           </div>
-          <h1 style={S.h1}>Contractor CRM</h1>
-          <p style={S.sub}>Sign in with your {ALLOWED_DOMAIN} Google account</p>
+          <h1 style={S.h1}>{mode === 'login' ? 'Sign in' : 'Create account'}</h1>
+          <p style={S.sub}>{CLIENT_CONFIG.brand.name} CRM</p>
 
-          <button onClick={signInWithGoogle} disabled={signing} style={S.btn}>
-            {/* Google logo */}
-            <svg width="18" height="18" viewBox="0 0 18 18">
-              <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
-              <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/>
-              <path fill="#FBBC05" d="M3.964 10.71c-.18-.54-.282-1.117-.282-1.71s.102-1.17.282-1.71V4.958H.957C.347 6.173 0 7.548 0 9s.348 2.827.957 4.042l3.007-2.332z"/>
-              <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/>
-            </svg>
-            {signing ? 'Redirecting to Google…' : 'Continue with Google'}
+          <form onSubmit={handleSubmit}>
+            <label style={S.label}>Email</label>
+            <input style={S.input} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com" required autoComplete="email" />
+            <label style={S.label}>Password</label>
+            <input style={S.input} type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required autoComplete={mode==='login'?'current-password':'new-password'} />
+            {error && <p style={S.err}>{error}</p>}
+            <button type="submit" disabled={busy} style={S.btn}>
+              {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+            </button>
+          </form>
+
+          <button style={S.toggle} onClick={()=>{setMode(m=>m==='login'?'signup':'login');setError('');}}>
+            {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
           </button>
-
-          {error && <p style={S.err}>{error}</p>}
-
-          <p style={{color:'rgba(255,255,255,0.2)',fontSize:11,textAlign:'center',marginTop:20,fontFamily:'Poppins,sans-serif'}}>
-            Only @{ALLOWED_DOMAIN} accounts are allowed
-          </p>
         </div>
       </div>
     );
   }
 
   window.__crmSignOut = signOut;
-  // Pass ssoUser to children via cloneElement — CRMApp accepts it as prop
-  return React.cloneElement(children, { ssoUser });
+  return React.cloneElement(children, { ssoUser: authUser });
 }
 
 
