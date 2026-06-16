@@ -1925,11 +1925,7 @@ function CRMProvider({ children, ssoUser }) {
         setAudiencePushes(pushesData||[]);
         if (notifsData) setNotifications(notifsData);
         if (dashData) setMyDashboards(dashData);
-        if (snapshotData) {
-          const snapshotMap = {};
-          snapshotData.forEach(s => { snapshotMap[s.widget_type] = { data: s.data || [], computed_at: s.computed_at, row_count: s.row_count || 0 }; });
-          setOnsightSnapshots(snapshotMap);
-        }
+        // onsight snapshots removed — analytics now read from CONTRACTOR_MAP directly
         if (oppData) setOpportunities(oppData);
         console.log('[CRM] background data loaded:', (cdata||[]).length, 'contractors,', (idata||[]).length, 'interactions,', (tdata||[]).length, 'tasks,', (adata||[]).length, 'audiences,', (convData||[]).length, 'conversions');
       }).catch(e => console.warn('[CRM] background load error:', e));
@@ -3257,127 +3253,11 @@ const WIDGET_CATALOG = [
 ];
 
 // ─── ONSIGHT WIDGET CATALOG ──────────────────────────────────────────────────
-const ONSIGHT_WIDGET_CATALOG = [
-  // ── Reserve ──────────────────────────────────────────────────────────────
-  { type:'onsight_reserve_by_country', label:'Reserve Adoption by Country', icon:'🔵', category:'Reserve',
-    desc:'Reserve subscriber count and adoption rate per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'reserve_count', y_label:'Subscribers',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    drill_down_extra_rules:[{field:'is_reserve',operator:'=',value:'false'}],
-    query:`From process_data.contract joined with raw_plan_subscription on cod_contractor where contract.contract_state = 'ACTIVE' group by country, count reserve subscribers (plan_code = 'RESERVE' and is_enabled = true) return country, total_active, reserve_count, reserve_rate_pct. Exclude dummy clients and Ontop internal accounts. Order by total_active desc. Limit 20 countries.`,
-  },
-  { type:'onsight_reserve_spend_quartile', label:'Reserve Rate by Card Spend Quartile', icon:'🔵', category:'Reserve',
-    desc:'How Reserve adoption varies across card spend quartiles',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'quartile', y_field:'reserve_rate_pct', y_label:'Reserve Rate %',
-    cached_ttl_hours:24, drill_down_field:'card_spend', drill_down_operator:'>=', drill_down_value_key:'min_spend',
-    drill_down_extra_rules:[{field:'is_reserve',operator:'=',value:'false'}],
-    query:`From process_data.contract joined with process_data.card_transaction for active contractors, divide into 4 quartiles by total card spend. For each quartile return: quartile label, total contractors, reserve_count, reserve_rate_pct, min_spend, max_spend. Exclude dummy clients and Ontop internal accounts.`,
-  },
-  { type:'onsight_reserve_arr_by_country', label:'Reserve ARR by Country', icon:'🔵', category:'Reserve',
-    desc:'Annual recurring revenue from Reserve subscriptions per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'reserve_arr', y_label:'ARR ($)',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    query:`From raw_plan_subscription joined with process_data.contract on cod_contractor where is_enabled = true and plan_code = 'RESERVE' group by country, sum annual value (MONTHLY plan * 12 * price, ANNUAL plan * price). Return country, subscriber_count, reserve_arr. Exclude dummy clients and Ontop internal accounts. Order by reserve_arr desc. Limit 20.`,
-  },
-  // ── Future Fund ───────────────────────────────────────────────────────────
-  { type:'onsight_ff_aum_by_country', label:'Future Fund AUM by Country', icon:'🟢', category:'Future Fund',
-    desc:'Future Fund assets under management per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'total_ff_aum', y_label:'AUM ($)',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    drill_down_extra_rules:[{field:'ff_net',operator:'=',value:0}],
-    query:`From process_data.wallet_transaction joined with process_data.contract on cod_contractor where des_transaction_type in ('FUTURE_FUND_DEPOSIT','FUTURE_FUND_WITHDRAWAL') and des_status = 'COMPLETED' group by country, net deposits (deposits - withdrawals). Return country, depositor_count, total_ff_aum. Exclude dummy clients and Ontop internal accounts. Order by total_ff_aum desc. Limit 20.`,
-  },
-  { type:'onsight_ff_adoption_by_country', label:'Future Fund Adoption by Country', icon:'🟢', category:'Future Fund',
-    desc:'Future Fund adoption rate per country — who has deposited vs who could',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'ff_adoption_rate', y_label:'Adoption %',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    drill_down_extra_rules:[{field:'ff_net',operator:'=',value:0},{field:'wallet',operator:'>',value:500}],
-    query:`From process_data.contract joined with wallet_transaction on cod_contractor for active contractors, group by country. Return country, total_active, ff_users (contractors with net FF deposits > 0), ff_adoption_rate (ff_users / total_active * 100). Exclude dummy clients and Ontop internal accounts. Order by total_active desc. Limit 20.`,
-  },
-  { type:'onsight_ff_balance_distribution', label:'Future Fund Balance Distribution', icon:'🟢', category:'Future Fund',
-    desc:'Distribution of Future Fund balances across balance ranges',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'balance_range', y_field:'contractor_count', y_label:'Contractors',
-    cached_ttl_hours:24, drill_down_field:'ff_net', drill_down_operator:'>=', drill_down_value_key:'min_balance',
-    query:`From process_data.wallet_transaction grouped by cod_contractor compute net Future Fund balance per contractor (deposits - withdrawals). Bucket into ranges: $0-500, $500-2K, $2K-10K, $10K-50K, $50K+. Return balance_range, contractor_count, total_balance, min_balance, max_balance. Exclude dummy clients and Ontop internal accounts.`,
-  },
-  // ── Wallet ────────────────────────────────────────────────────────────────
-  { type:'onsight_wallet_by_country', label:'Wallet Balance by Country', icon:'💰', category:'Wallet',
-    desc:'Total wallet balances held per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'total_wallet_balance', y_label:'Balance ($)',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    drill_down_extra_rules:[{field:'wallet',operator:'>',value:0}],
-    query:`From process_data.contract for active contractors group by country, sum wallet balance. Return country, total_active, wallet_positive_count, total_wallet_balance, avg_wallet_balance. Exclude dummy clients and Ontop internal accounts. Order by total_wallet_balance desc. Limit 20.`,
-  },
-  { type:'onsight_wallet_distribution', label:'Wallet Balance Distribution', icon:'💰', category:'Wallet',
-    desc:'How wallet balances are distributed across contractors',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'balance_range', y_field:'contractor_count', y_label:'Contractors',
-    cached_ttl_hours:24, drill_down_field:'wallet', drill_down_operator:'>=', drill_down_value_key:'min_balance',
-    query:`From process_data.contract for active contractors group wallet balance into ranges: $0, $1-500, $500-2K, $2K-10K, $10K-50K, $50K+. Return balance_range, contractor_count, total_balance, min_balance, max_balance. Exclude dummy clients and Ontop internal accounts.`,
-  },
-  // ── Card Spend ────────────────────────────────────────────────────────────
-  { type:'onsight_card_spend_by_country', label:'Card Spend by Country', icon:'💳', category:'Card',
-    desc:'Total lifetime card spend per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'total_card_spend', y_label:'Spend ($)',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    query:`From process_data.card_transaction joined with process_data.contract on cod_contractor for active contractors group by country, sum total card spend. Return country, cardholder_count, total_card_spend, avg_spend_per_cardholder. Exclude dummy clients and Ontop internal accounts. Order by total_card_spend desc. Limit 20.`,
-  },
-  { type:'onsight_card_spend_distribution', label:'Card Spend Distribution', icon:'💳', category:'Card',
-    desc:'How card spend is distributed across contractors',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'spend_range', y_field:'contractor_count', y_label:'Contractors',
-    cached_ttl_hours:24, drill_down_field:'card_spend', drill_down_operator:'>=', drill_down_value_key:'min_spend',
-    query:`From process_data.card_transaction grouped by cod_contractor compute total lifetime card spend per contractor. Bucket into ranges: $0, $1-1K, $1K-5K, $5K-20K, $20K+. Return spend_range, contractor_count, total_spend, min_spend, max_spend. Exclude dummy clients and Ontop internal accounts.`,
-  },
-  // ── Compensation ──────────────────────────────────────────────────────────
-  { type:'onsight_comp_by_country', label:'Compensation by Country', icon:'💵', category:'Compensation',
-    desc:'Average monthly compensation per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'avg_compensation', y_label:'Avg Monthly Comp ($)',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    query:`From process_data.contract for active contractors group by country, compute avg and total monthly compensation. Return country, contractor_count, avg_compensation, total_compensation. Exclude dummy clients and Ontop internal accounts. Order by avg_compensation desc. Limit 20.`,
-  },
-  { type:'onsight_comp_distribution', label:'Compensation Distribution', icon:'💵', category:'Compensation',
-    desc:'How monthly compensation is distributed across contractors',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'comp_range', y_field:'contractor_count', y_label:'Contractors',
-    cached_ttl_hours:24, drill_down_field:'comp', drill_down_operator:'>=', drill_down_value_key:'min_comp',
-    query:`From process_data.contract for active contractors group monthly compensation into ranges: $0-500, $500-1K, $1K-3K, $3K-7K, $7K+. Return comp_range, contractor_count, min_comp, max_comp, avg_comp. Exclude dummy clients and Ontop internal accounts.`,
-  },
-  // ── Platform Overview ─────────────────────────────────────────────────────
-  { type:'onsight_active_by_country', label:'Active Contractors by Country', icon:'🌎', category:'Overview',
-    desc:'Active contractor headcount per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'total_active', y_label:'Active Contractors',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    query:`From process_data.contract where contract_state = 'ACTIVE' group by country, count contractors. Return country, total_active. Exclude dummy clients and Ontop internal accounts. Order by total_active desc. Limit 25.`,
-  },
-  { type:'onsight_multi_product_by_country', label:'Multi-Product Adoption by Country', icon:'📦', category:'Overview',
-    desc:'Contractors with both Reserve and Future Fund per country',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'country', y_field:'both_products', y_label:'Multi-Product Contractors',
-    cached_ttl_hours:24, drill_down_field:'country', drill_down_operator:'=',
-    drill_down_extra_rules:[{field:'is_reserve',operator:'=',value:'true'},{field:'ff_net',operator:'>',value:0}],
-    query:`From process_data.contract joined with raw_plan_subscription and wallet_transaction for active contractors, group by country. Count contractors with both active Reserve subscription AND positive Future Fund balance. Return country, total_active, both_products, multi_product_rate_pct. Exclude dummy clients and Ontop internal accounts. Order by both_products desc. Limit 20.`,
-  },
-  { type:'onsight_tenure_distribution', label:'Platform Tenure Distribution', icon:'📅', category:'Overview',
-    desc:'How long contractors have been on Ontop',
-    default_chart:'bar', charts_available:['bar','table'],
-    x_field:'tenure_range', y_field:'contractor_count', y_label:'Contractors',
-    cached_ttl_hours:24, drill_down_field:'days_since', drill_down_operator:'>=', drill_down_value_key:'min_days',
-    query:`From process_data.contractor for active contractors compute days since dat_first_compensation. Bucket into ranges: 0-30 days, 30-90 days, 90-180 days, 180-365 days, 365+ days. Return tenure_range, contractor_count, min_days, max_days. Exclude dummy clients and Ontop internal accounts.`,
-  },
-];
-
-const ONSIGHT_WIDGET_CATEGORIES = ['Overview','Reserve','Future Fund','Wallet','Card','Compensation'];
+function getAnalyticsWidgets() {
+  return CLIENT_CONFIG.analyticsWidgets || [];
+}
+const ONSIGHT_WIDGET_CATALOG = getAnalyticsWidgets();
+const ONSIGHT_WIDGET_CATEGORIES = [...new Set(ONSIGHT_WIDGET_CATALOG.map(w => w.category || 'General'))];
 
 const WIDGET_SIZE_COLS = { sm: 1, md: 2, lg: 2 };
 const WIDGET_SIZE_ROWS = { sm: 1, md: 1, lg: 2 };
@@ -3681,45 +3561,74 @@ function WidgetCard({ widget, onRemove, editMode, users }) {
 }
 
 function OnsightWidgetCard({ widget, onRemove, editMode, onCreateAudience }) {
-  const { onsightSnapshots } = useCRM();
-  const catalog = ONSIGHT_WIDGET_CATALOG.find(w => w.type === widget.type);
+  const catalog = ONSIGHT_WIDGET_CATALOG.find(w => w.type === widget.type) || widget;
+  const [data, setData] = React.useState([]);
+  const [chartType, setChartType] = React.useState(widget.chart_type || catalog?.chart_type || 'bar');
+  const [loading, setLoading] = React.useState(true);
 
-  const snapshot = onsightSnapshots[widget.type];
-  const data = snapshot?.data || [];
-  const lastFetched = snapshot?.computed_at || null;
-  const hasData = data.length > 0;
+  React.useEffect(() => {
+    setLoading(true);
+    try {
+      const agg = catalog?.aggregation || 'count';
+      const xField = catalog?.x_field || 'country';
+      const yField = catalog?.y_field || '_count';
+      const groups = {};
 
-  const [chartType, setChartType] = useState(widget.chart_type || catalog?.default_chart || 'bar');
+      for (const [, fin] of CONTRACTOR_MAP) {
+        const key = String(fin[xField] !== undefined && fin[xField] !== null ? fin[xField] : '(none)');
+        if (!groups[key]) groups[key] = { _count: 0, _sum: 0, _truthy: 0 };
+        groups[key]._count += 1;
+        const numVal = Number(fin[yField]) || 0;
+        groups[key]._sum += numVal;
+        if (fin[yField]) groups[key]._truthy += 1;
+      }
+
+      const rows = Object.entries(groups).map(([k, g]) => {
+        let yVal;
+        if (agg === 'count') yVal = g._count;
+        else if (agg === 'sum') yVal = Math.round(g._sum * 100) / 100;
+        else if (agg === 'avg') yVal = g._count > 0 ? Math.round(g._sum / g._count * 100) / 100 : 0;
+        else if (agg === 'rate') yVal = g._count > 0 ? Math.round(g._truthy / g._count * 10000) / 100 : 0;
+        else yVal = g._count;
+        const row = {};
+        row[xField] = k;
+        row[yField === '_count' ? 'count' : yField] = yVal;
+        row['_count'] = g._count;
+        return row;
+      });
+
+      const displayKey = yField === '_count' ? 'count' : yField;
+      rows.sort((a, b) => (b[displayKey] || 0) - (a[displayKey] || 0));
+      setData(rows.slice(0, 25));
+    } catch(e) {
+      console.warn('OnsightWidgetCard error:', e);
+      setData([]);
+    }
+    setLoading(false);
+  }, [widget.type]);
+
+  const xField = catalog?.x_field || 'country';
+  const yField = catalog?.y_field || '_count';
+  const displayKey = yField === '_count' ? 'count' : yField;
+  const yLabel = catalog?.y_label || 'Count';
+  const isDrillable = !!catalog?.drill_down_field && !!onCreateAudience;
 
   function handleChartClick(barData) {
-    if (!catalog?.drill_down_field || !onCreateAudience) return;
-    const drillValue = catalog.drill_down_value_key
-      ? barData[catalog.drill_down_value_key]
-      : barData[catalog.x_field];
+    if (!isDrillable) return;
+    const drillValue = barData[catalog.drill_down_field] ?? barData[xField];
     if (drillValue === undefined || drillValue === null) return;
     const filterRules = [
       { field: catalog.drill_down_field, operator: catalog.drill_down_operator || '=', value: String(drillValue) },
       ...(catalog.drill_down_extra_rules || []),
     ];
-    const segmentLabel = barData[catalog.x_field] || drillValue;
-    onCreateAudience({
-      name: `${segmentLabel} — ${catalog.label}`,
-      filter_rules: filterRules,
-      audience_type: 'dynamic',
-      description: `Created from dashboard: ${catalog.label} — segment: ${segmentLabel}`,
-    });
+    onCreateAudience({ name: `${drillValue} — ${catalog.label}`, filter_rules: filterRules, audience_type: 'dynamic', description: `Created from dashboard: ${catalog.label}` });
   }
-
-  const xField = catalog?.x_field || 'label';
-  const yField = catalog?.y_field || 'value';
-  const yLabel = catalog?.y_label || 'Value';
-  const isDrillable = !!catalog?.drill_down_field && !!onCreateAudience;
 
   function fmtVal(v) {
     if (typeof v !== 'number') return v ?? '—';
-    if (v >= 1000000) return `$${(v/1000000).toFixed(1)}M`;
-    if (v >= 1000) return `$${(v/1000).toFixed(0)}K`;
-    if (v % 1 !== 0) return `${v.toFixed(1)}%`;
+    if (v >= 1000000) return `${(v/1000000).toFixed(1)}M`;
+    if (v >= 1000) return `${(v/1000).toFixed(0)}K`;
+    if (v % 1 !== 0) return v.toFixed(1);
     return v.toLocaleString();
   }
 
@@ -3728,78 +3637,49 @@ function OnsightWidgetCard({ widget, onRemove, editMode, onCreateAudience }) {
       {editMode && (
         <button onClick={()=>onRemove(widget.id)} style={{position:'absolute',top:8,right:8,background:'#FEE2E2',border:'none',borderRadius:999,width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'#EF4444',zIndex:2,lineHeight:1}}>✕</button>
       )}
-
-      {/* Header */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <span style={{fontSize:16}}>{catalog?.icon||'📊'}</span>
           <div>
             <div style={{fontSize:12,fontWeight:600,color:'#1A1630'}}>{widget.title||catalog?.label}</div>
-            <div style={{fontSize:10,color:'#B8B4D4',display:'flex',alignItems:'center',gap:4}}>
-              <span style={{background:'rgba(96,45,245,0.08)',color:'#602DF5',padding:'1px 5px',borderRadius:3,fontSize:9,fontWeight:500}}>Onsight</span>
-              {lastFetched && <span>Updated {fmt.timeAgo(lastFetched)}</span>}
-            </div>
+            {catalog?.description && <div style={{fontSize:10,color:'#B8B4D4'}}>{catalog.description}</div>}
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:6}}>
-          {catalog?.charts_available?.length > 1 && catalog.charts_available.map(ct => (
-            <button key={ct} onClick={()=>setChartType(ct)}
-              style={{fontSize:10,padding:'2px 8px',borderRadius:6,border:'none',cursor:'pointer',fontFamily:'Poppins,sans-serif',
-                background:chartType===ct?'#602DF5':'#F0EEF8',color:chartType===ct?'#fff':'#9590C0'}}>
-              {ct==='bar'?'▊':'☰'}
-            </button>
-          ))}
-          {lastFetched
-            ? <div style={{fontSize:10,color:'#B8B4D4',whiteSpace:'nowrap'}}>{fmt.timeAgo(lastFetched)}</div>
-            : <div style={{fontSize:10,padding:'2px 8px',borderRadius:999,background:'#FEF3C7',color:'#92400E',border:'1px solid #FCD34D'}}>No snapshot</div>
-          }
+        <div style={{display:'flex',alignItems:'center',gap:4}}>
+          <button onClick={()=>setChartType('bar')} style={{fontSize:10,padding:'2px 8px',borderRadius:6,border:'none',cursor:'pointer',background:chartType==='bar'?'#602DF5':'#F0EEF8',color:chartType==='bar'?'#fff':'#9590C0'}}>▊</button>
+          <button onClick={()=>setChartType('table')} style={{fontSize:10,padding:'2px 8px',borderRadius:6,border:'none',cursor:'pointer',background:chartType==='table'?'#602DF5':'#F0EEF8',color:chartType==='table'?'#fff':'#9590C0'}}>☰</button>
         </div>
       </div>
 
-      {isDrillable && hasData && (
-        <div style={{fontSize:10,color:'#9590C0',marginBottom:8,display:'flex',alignItems:'center',gap:4}}>
-          ✨ Click any bar to create an audience from that segment
-        </div>
+      {isDrillable && data.length > 0 && (
+        <div style={{fontSize:10,color:'#9590C0',marginBottom:8}}>✨ Click any bar to create an audience</div>
       )}
 
-      {/* Content */}
-      {!hasData ? (
-        <div style={{padding:'32px 24px',textAlign:'center',display:'flex',flexDirection:'column',alignItems:'center',gap:12}}>
-          <div style={{fontSize:32}}>📊</div>
-          <div style={{fontSize:13,fontWeight:600,color:'#1A1630'}}>No data yet</div>
-          <div style={{fontSize:11,color:'#9590C0',lineHeight:1.6,maxWidth:340,textAlign:'center'}}>
-            This widget shows pre-computed Onsight data. To populate it, ask Claude Code:
-          </div>
-          <div style={{background:'#F8F7FF',border:'1px solid rgba(96,45,245,0.15)',borderRadius:8,padding:'10px 14px',fontSize:11,fontFamily:'monospace',color:'#602DF5',lineHeight:1.8}}>
-            "Refresh Onsight dashboard snapshots"
-          </div>
+      {loading ? (
+        <div style={{height:160,display:'flex',alignItems:'center',justifyContent:'center',color:'#B8B4D4',fontSize:12}}>Loading…</div>
+      ) : data.length === 0 ? (
+        <div style={{height:160,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8,color:'#B8B4D4'}}>
+          <span style={{fontSize:28}}>📊</span>
+          <span style={{fontSize:12}}>No data available</span>
         </div>
       ) : chartType === 'table' ? (
-        <div style={{overflowX:'auto'}}>
+        <div style={{overflowX:'auto',maxHeight:220}}>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
             <thead>
-              <tr>{Object.keys(data[0]||{}).map(col=>(
-                <th key={col} style={{textAlign:'left',padding:'6px 8px',color:'#9590C0',fontSize:10,textTransform:'uppercase',letterSpacing:'0.05em',borderBottom:'0.5px solid #E2DFEF',fontWeight:600}}>
-                  {col.replace(/_/g,' ')}
-                </th>
-              ))}
-              {isDrillable && <th style={{width:90,borderBottom:'0.5px solid #E2DFEF'}} />}
+              <tr>
+                <th style={{textAlign:'left',padding:'6px 8px',color:'#9590C0',fontSize:10,borderBottom:'0.5px solid #E2DFEF',fontWeight:600}}>{xField.replace(/_/g,' ')}</th>
+                <th style={{textAlign:'right',padding:'6px 8px',color:'#9590C0',fontSize:10,borderBottom:'0.5px solid #E2DFEF',fontWeight:600}}>{yLabel}</th>
+                {isDrillable && <th style={{width:90,borderBottom:'0.5px solid #E2DFEF'}} />}
               </tr>
             </thead>
             <tbody>
               {data.map((row,i)=>(
-                <tr key={i} style={{borderBottom:'0.5px solid #F5F4FA'}}
-                  onMouseEnter={e=>{if(isDrillable)e.currentTarget.style.background='#F9FAFB';}}
-                  onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                  {Object.entries(row).map(([col,val])=>(
-                    <td key={col} style={{padding:'7px 8px',color:'#1A1630',fontVariantNumeric:'tabular-nums'}}>
-                      {typeof val==='number'?fmtVal(val):String(val??'—')}
-                    </td>
-                  ))}
+                <tr key={i} style={{borderBottom:'0.5px solid #F5F4FA'}}>
+                  <td style={{padding:'7px 8px',color:'#1A1630'}}>{row[xField]}</td>
+                  <td style={{padding:'7px 8px',color:'#1A1630',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{fmtVal(row[displayKey])}</td>
                   {isDrillable && (
                     <td style={{padding:'7px 8px'}}>
-                      <button onClick={()=>handleChartClick(row)}
-                        style={{fontSize:10,padding:'2px 8px',borderRadius:6,background:'rgba(96,45,245,0.08)',color:'#602DF5',border:'0.5px solid rgba(96,45,245,0.2)',cursor:'pointer',fontFamily:'Poppins,sans-serif',whiteSpace:'nowrap'}}>
+                      <button onClick={()=>handleChartClick(row)} style={{fontSize:10,padding:'2px 8px',borderRadius:6,background:'rgba(96,45,245,0.08)',color:'#602DF5',border:'0.5px solid rgba(96,45,245,0.2)',cursor:'pointer',fontFamily:'Poppins,sans-serif'}}>
                         + Audience
                       </button>
                     </td>
@@ -3811,15 +3691,13 @@ function OnsightWidgetCard({ widget, onRemove, editMode, onCreateAudience }) {
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={data.slice(0,15)} margin={{top:4,right:8,bottom:40,left:8}} style={{cursor:isDrillable?'pointer':'default'}}>
+          <BarChart data={data.slice(0,20)} margin={{top:4,right:8,bottom:40,left:8}} style={{cursor:isDrillable?'pointer':'default'}}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2DFEF" />
             <XAxis dataKey={xField} tick={{fill:'#9590C0',fontSize:9,fontFamily:'Poppins,sans-serif'}} angle={-35} textAnchor="end" interval={0} axisLine={{stroke:'#E2DFEF'}} tickLine={false} />
-            <YAxis tickFormatter={v=>v>=1e6?`${(v/1e6).toFixed(1)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:v} tick={{fill:'#9590C0',fontSize:9,fontFamily:'Poppins,sans-serif'}} axisLine={false} tickLine={false} width={50} />
-            <RTooltip contentStyle={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:8,fontSize:11,fontFamily:'Poppins,sans-serif'}}
-              formatter={(value)=>[fmtVal(value),yLabel]} labelStyle={{color:'#1A1630',fontWeight:600}} />
-            <Bar dataKey={yField} fill="#602DF5" radius={[4,4,0,0]} maxBarSize={40}
-              onClick={isDrillable?handleChartClick:undefined} cursor={isDrillable?'pointer':'default'}>
-              {data.slice(0,15).map((_,i)=><Cell key={i} fill="#602DF5" opacity={0.85} />)}
+            <YAxis tickFormatter={v=>v>=1e6?`${(v/1e6).toFixed(1)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:String(v)} tick={{fill:'#9590C0',fontSize:9,fontFamily:'Poppins,sans-serif'}} axisLine={false} tickLine={false} width={50} />
+            <RTooltip contentStyle={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:8,fontSize:11,fontFamily:'Poppins,sans-serif'}} formatter={(value)=>[fmtVal(value),yLabel]} labelStyle={{color:'#1A1630',fontWeight:600}} />
+            <Bar dataKey={displayKey} fill="#602DF5" radius={[4,4,0,0]} maxBarSize={40} onClick={isDrillable?handleChartClick:undefined} cursor={isDrillable?'pointer':'default'}>
+              {data.slice(0,20).map((_,i)=><Cell key={i} fill="#602DF5" opacity={0.85+(i%2)*0.15} />)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -3827,6 +3705,7 @@ function OnsightWidgetCard({ widget, onRemove, editMode, onCreateAudience }) {
     </div>
   );
 }
+
 
 function CreateAudienceFromChartModal({ prefill, onClose }) {
   const { saveAudience } = useCRM();
@@ -12149,65 +12028,46 @@ function MyDayView() {
 }
 
 function OnsightSnapshotsSettings() {
-  const { onsightSnapshots } = useCRM();
-  const toast = useToast();
-  const REFRESH_PROMPT = `Refresh all Onsight dashboard snapshots in crm.html. For each widget in ONSIGHT_WIDGET_CATALOG, run its query against Onsight via MCP, then upsert the results into crm_onsight_snapshots in Supabase (table has: widget_type text unique, data jsonb, row_count integer, computed_at timestamp, computed_by text). Supabase URL: https://qfhbhiqaljbqvzuwwwqt.supabase.co`;
-
+  const widgets = getAnalyticsWidgets();
+  const categories = [...new Set(widgets.map(w => w.category || 'General'))];
+  const recordCount = (window.UPSELL_DATA?.rows?.length||0) + (window.INACTIVE_DATA?.rows?.length||0);
   return (
     <div style={{background:'#F5F4FA',minHeight:'100vh',padding:32}}>
       <div style={{maxWidth:700,margin:'0 auto'}}>
         <div style={{marginBottom:24}}>
-          <h2 style={{fontSize:20,fontWeight:700,color:'#1A1630',margin:0}}>Dashboard Data Snapshots</h2>
+          <h2 style={{fontSize:20,fontWeight:700,color:'#1A1630',margin:0}}>Analytics Settings</h2>
           <p style={{fontSize:12,color:'#9590C0',marginTop:6,lineHeight:1.6}}>
-            Onsight widgets use pre-computed snapshots stored in Supabase. Onsight can only be queried from Claude Code (MCP) — not from the browser. Copy the prompt below and paste it into Claude Code to refresh all widget data.
+            Analytics widgets read directly from your client data file. No API calls or snapshots needed.
           </p>
         </div>
-
-        {/* Refresh prompt */}
-        <div style={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:12,padding:20,marginBottom:20}}>
-          <div style={{fontSize:12,fontWeight:600,color:'#1A1630',marginBottom:8}}>Claude Code refresh prompt</div>
-          <div style={{background:'#F8F7FF',border:'1px solid rgba(96,45,245,0.15)',borderRadius:8,padding:'12px 14px',fontSize:11,fontFamily:'monospace',color:'#602DF5',lineHeight:1.8,marginBottom:12,wordBreak:'break-word'}}>
-            {REFRESH_PROMPT}
+        <div style={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:12,padding:20,marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:600,color:'#1A1630',marginBottom:12}}>Data source</div>
+          <div style={{fontSize:12,color:'#9590C0',display:'flex',flexDirection:'column',gap:6}}>
+            <div>📦 <strong>{recordCount.toLocaleString()}</strong> records loaded from client data file</div>
+            <div>📊 <strong>{widgets.length}</strong> analytics widgets configured</div>
+            <div>🗂 Categories: {categories.join(', ') || '—'}</div>
           </div>
-          <button
-            onClick={() => { navigator.clipboard.writeText(REFRESH_PROMPT); toast('Prompt copied to clipboard', 'success'); }}
-            style={{padding:'8px 18px',borderRadius:8,fontSize:12,background:'linear-gradient(135deg,#602DF5,#7A50F7)',color:'#fff',border:'none',cursor:'pointer',fontFamily:'Poppins,sans-serif',fontWeight:600}}>
-            Copy prompt
-          </button>
         </div>
-
-        {/* Per-widget status */}
         <div style={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:12,padding:20}}>
-          <div style={{fontSize:12,fontWeight:600,color:'#1A1630',marginBottom:12}}>Snapshot status — {ONSIGHT_WIDGET_CATALOG.length} widgets</div>
+          <div style={{fontSize:12,fontWeight:600,color:'#1A1630',marginBottom:12}}>Configured widgets</div>
           <div style={{display:'flex',flexDirection:'column',gap:6}}>
-            {ONSIGHT_WIDGET_CATALOG.map(catalog => {
-              const snap = onsightSnapshots[catalog.type];
-              return (
-                <div key={catalog.type} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 12px',borderRadius:8,background:'#F5F4FA',border:'0.5px solid #E2DFEF'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontSize:14}}>{catalog.icon}</span>
-                    <div>
-                      <div style={{fontSize:11,fontWeight:600,color:'#1A1630'}}>{catalog.label}</div>
-                      <div style={{fontSize:10,color:'#B8B4D4'}}>{catalog.category}</div>
-                    </div>
-                  </div>
-                  {snap ? (
-                    <div style={{display:'flex',alignItems:'center',gap:10}}>
-                      <span style={{fontSize:11,color:'#10B981',fontWeight:500}}>✓ {snap.row_count} rows</span>
-                      <span style={{fontSize:10,color:'#B8B4D4'}}>{fmt.timeAgo(snap.computed_at)}</span>
-                    </div>
-                  ) : (
-                    <span style={{fontSize:10,padding:'2px 10px',borderRadius:999,background:'#FEF3C7',color:'#92400E',border:'1px solid #FCD34D',fontWeight:500}}>No snapshot</span>
-                  )}
+            {widgets.length === 0 && <div style={{fontSize:12,color:'#B8B4D4',textAlign:'center',padding:24}}>No analytics widgets configured yet. Add them in the setup wizard or via CLIENT_CONFIG.analyticsWidgets.</div>}
+            {widgets.map(w => (
+              <div key={w.type} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 12px',borderRadius:8,background:'#F5F4FA',border:'0.5px solid #E2DFEF'}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:600,color:'#1A1630'}}>{w.label}</div>
+                  <div style={{fontSize:10,color:'#B8B4D4'}}>{w.category} · {w.aggregation||'count'} of {w.y_field} by {w.x_field}</div>
                 </div>
-              );
-            })}
+                <span style={{fontSize:10,padding:'2px 8px',borderRadius:999,background:'rgba(96,45,245,0.08)',color:'#602DF5',border:'0.5px solid rgba(96,45,245,0.2)'}}>live</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
     </div>
   );
 }
+
 
 /*
  * VENDOR DATA FILE COLUMN SPEC
