@@ -625,8 +625,8 @@ function getOpportunityStatus(crmRec) {
 
 // ─── TEAM CONSTANTS ─────────────────────────────────────────────────────────
 const TEAMS = {
-  ACTIVATION:        { label:'Activation',       color:'#602DF5', bg:'rgba(96,45,245,0.08)'  },
-  WORKFORCE_SUCCESS: { label:'Workforce Success', color:'#5856B7', bg:'rgba(88,86,183,0.08)'  },
+  ACTIVATION:        { label:'Activation',       color:'#C17D3A', bg:'rgba(193,125,58,0.08)'  },
+  WORKFORCE_SUCCESS: { label:'Workforce Success', color:'#2E2318', bg:'rgba(46,35,24,0.08)'  },
   MARKETING:         { label:'Marketing',         color:'#7A50F7', bg:'rgba(122,80,247,0.08)' },
 };
 
@@ -705,7 +705,7 @@ const ConversionDataSource = {
       `From raw_plan_subscription where plan_code = 'RESERVE' ` +
       `and is_enabled = true and subscription_date >= '${since}', ` +
       `return cod_contractor and subscription_date. ` +
-      `Exclude dummy clients (is_dummy_client = 1) and Ontop internal accounts ` +
+      `` +
       `(cod_client IN ('CL001511','CL001703','CL000108','CL004482','CL000035')).`
     );
     // FUTURE: direct DB query — uncomment when migrating
@@ -725,7 +725,7 @@ const ConversionDataSource = {
       `From raw_plan_subscription where plan_code = 'WANDERLUST' ` +
       `and is_enabled = true and subscription_date >= '${since}', ` +
       `return cod_contractor and subscription_date. ` +
-      `Exclude dummy clients and Ontop internal accounts ` +
+      `` +
       `(CL001511, CL001703, CL000108, CL004482, CL000035).`
     );
     // FUTURE: direct DB query — uncomment when migrating
@@ -746,7 +746,7 @@ const ConversionDataSource = {
       `where message LIKE 'futurefund debit%' and des_status = 'COMPLETED', ` +
       `find contractors whose MIN(dat_transaction) >= '${since}'. ` +
       `Return cod_contractor and MIN(dat_transaction) as conversion_date. ` +
-      `Exclude dummy clients and Ontop internal accounts.`
+      ``
     );
     // FUTURE: direct DB query — uncomment when migrating
     // const { data } = await SB_PROD
@@ -766,7 +766,7 @@ const ConversionDataSource = {
       `and des_status = 'COMPLETED', ` +
       `find contractors whose MIN(dat_transaction) >= '${since}'. ` +
       `Return cod_contractor and MIN(dat_transaction) as conversion_date. ` +
-      `Exclude dummy clients and Ontop internal accounts.`
+      ``
     );
     // FUTURE: direct DB query — uncomment when migrating
     // const { data } = await SB_PROD
@@ -1393,8 +1393,8 @@ function AuthGate({ children }) {
                 </div>
             }
           </div>
-          <h1 style={S.h1}>{mode === 'login' ? 'Sign in' : 'Create account'}</h1>
-          <p style={S.sub}>{CLIENT_CONFIG.brand.name} CRM</p>
+          <h1 style={S.h1}>{CLIENT_CONFIG.brand.name}</h1>
+          <p style={S.sub}>{mode === 'login' ? 'Sign in to your account' : 'Create your account'}</p>
 
           <form onSubmit={handleSubmit}>
             <label style={S.label}>Email</label>
@@ -1556,10 +1556,10 @@ const STAGE_BORDER = {
   'Not Interested': '#F5C6CB',
 };
 const SEG_CFG = {
-  RESERVE:        { label:'Reserve',        bg:'#EEEDFE', text:'#3C3489', border:'#C4B8F7' },
-  FUTURE_FUND:    { label:'Future Fund',    bg:'#EDE9FF', text:'#602DF5', border:'#C4B8F7' },
+  RESERVE:        { label:'Reserve',        bg:'#F3E7D2', text:'#7A4F10', border:'#DFC89A' },
+  FUTURE_FUND:    { label:'Future Fund',    bg:'#E2F0E6', text:'#1F5C3C', border:'#B8DCC4' },
   COLD:           { label:'Cold',           bg:'#F5F4FA', text:'#9590C0', border:'#D4D0EE' },
-  GLOBAL_ACCOUNT: { label:'Personal Account', bg:'#281782', text:'#C4B8F7', border:'#3C3489' },
+  GLOBAL_ACCOUNT: { label:'Personal Account', bg:'#ECE6DA', text:'#4A3728', border:'#C8BFB0' },
 };
 // Which CRM team owns each upsell segment
 const SEG_TO_TEAM = {
@@ -3116,7 +3116,7 @@ function FirstUserScreen() {
           </div>
           <div>
             <label className="text-xs mb-1 block" style={{color:'#9590C0'}}>Email</label>
-            <input className="filter-input w-full" type="email" placeholder="sofia@getontop.com" value={email} onChange={e=>setEmail(e.target.value)} required />
+            <input className="filter-input w-full" type="email" placeholder={`you@${CLIENT_CONFIG.brand.allowedDomain||'company.com'}`} value={email} onChange={e=>setEmail(e.target.value)} required />
           </div>
           <button type="submit" disabled={saving} className="w-full py-2.5 rounded-lg bg-teal-700 text-white font-semibold text-sm disabled:opacity-60">
             {saving?'Adding...':'Add Team Member & Start'}
@@ -4725,7 +4725,7 @@ function DashGlobalAccountTab({ selectedCountry }) {
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <h2 style={{fontSize:16,fontWeight:700,color:'#1A1630',margin:0}}>Personal Account</h2>
         <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:'#EEEDFE',color:'#602DF5',border:'0.5px solid #C4B8F7'}}>NEW</span>
-        <span style={{fontSize:11,color:'#9590C0'}}>Launched March 2026 — use Ontop without an active contract.</span>
+        <span style={{fontSize:11,color:'var(--text-secondary)'}}>Cross-sell product for existing customers.</span>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14}}>
         {[
@@ -5165,7 +5165,7 @@ function OpportunityCard({ opp, fin, users, onClose, onStageChange }) {
       </div>
       {opp.reason && <div style={{ fontSize:10, color:'#9590C0', marginBottom:6, lineHeight:1.4 }}>{opp.reason}</div>}
       <div style={{ display:'flex', gap:8, fontSize:10, color:'#9590C0', marginBottom:6 }}>
-        <span title="Expected Value — estimated annual revenue Ontop earns if this contractor fully adopts the product, based on their compensation, wallet, and card data." style={{cursor:'help'}}>EV <strong style={{ color:'#1A1630' }}>${ev}</strong></span>
+        <span title={`Expected Value — estimated annual revenue ${CLIENT_CONFIG.brand.name} earns if this lead fully adopts the product.`} style={{cursor:'help'}}>EV <strong style={{ color:'#1A1630' }}>${ev}</strong></span>
         <span>·</span>
         <span title="Stage Probability — likelihood of converting at this pipeline stage: Identified 10%, Contacted 25%, Engaged 60%, Converted 100%." style={{cursor:'help'}}>{STAGE_PROBABILITIES[opp.pipeline_stage] ?? 10}%</span>
         <span>·</span>
@@ -5395,7 +5395,7 @@ function OpenOpportunityModal({ contractorId: defaultContractorId, defaultProduc
         </div>
         {/* Value preview */}
         <div style={{ background:'#F5F4FA', borderRadius:8, padding:'10px 14px', display:'flex', gap:16, fontSize:12 }}>
-          <span title="Expected Value — estimated annual revenue Ontop earns if this contractor fully adopts the product, based on their compensation, wallet, and card data." style={{cursor:'help',color:'#9590C0'}}>EV <strong style={{ color:'#1A1630' }}>${ev}</strong></span>
+          <span title={`Expected Value — estimated annual revenue ${CLIENT_CONFIG.brand.name} earns if this lead fully adopts the product.`} style={{cursor:'help',color:'#9590C0'}}>EV <strong style={{ color:'#1A1630' }}>${ev}</strong></span>
           <span title="Stage Probability — likelihood of converting at this pipeline stage: Identified 10%, Contacted 25%, Engaged 60%, Converted 100%." style={{cursor:'help',color:'#9590C0'}}>Prob <strong style={{ color:'#1A1630' }}>{STAGE_PROBABILITIES[stage]}%</strong></span>
           <span title="Weighted Value — EV × stage probability. The risk-adjusted value used to size and prioritize the pipeline." style={{cursor:'help',color:'#9590C0'}}>WV <strong style={{ color:'#602DF5' }}>${wv}</strong></span>
         </div>
@@ -5527,7 +5527,7 @@ function OpportunitiesProfileTab({ contractorId }) {
               </div>
               {opp.reason && <div style={{ fontSize:11, color:'#9590C0', marginBottom:6 }}>{opp.reason}</div>}
               <div style={{ display:'flex', gap:10, fontSize:11, color:'#9590C0' }}>
-                <span title="Expected Value — estimated annual revenue Ontop earns if this contractor fully adopts the product, based on their compensation, wallet, and card data." style={{cursor:'help'}}>EV <strong style={{ color:'#1A1630' }}>${ev}</strong></span>
+                <span title={`Expected Value — estimated annual revenue ${CLIENT_CONFIG.brand.name} earns if this lead fully adopts the product.`} style={{cursor:'help'}}>EV <strong style={{ color:'#1A1630' }}>${ev}</strong></span>
                 <span>·</span>
                 <span title="Stage Probability — likelihood of converting at this pipeline stage: Identified 10%, Contacted 25%, Engaged 60%, Converted 100%." style={{cursor:'help'}}>{STAGE_PROBABILITIES[opp.pipeline_stage] ?? 10}%</span>
                 <span>·</span>
@@ -5823,7 +5823,7 @@ function PipelineView({ country, segment, teamFilter, ownerFilter, setOwnerFilte
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
 
-  const canBulkDelete = currentUser?.role === 'admin' || currentUser?.email === 'slopez@getontop.com';
+  const canBulkDelete = currentUser?.role === 'admin';
 
   function toggleSelect(cid) {
     setSelected(prev => { const n = new Set(prev); n.has(cid) ? n.delete(cid) : n.add(cid); return n; });
@@ -7824,7 +7824,7 @@ function TeamView() {
             <input className="filter-input w-full" placeholder="Name" value={name} onChange={e=>setName(e.target.value)} required />
           </div>
           <div><label className="text-xs mb-1 block" style={{color:'#9590C0'}}>Email</label>
-            <input type="email" className="filter-input w-full" placeholder="email@getontop.com" value={email} onChange={e=>setEmail(e.target.value)} required />
+            <input type="email" className="filter-input w-full" placeholder={`you@${CLIENT_CONFIG.brand.allowedDomain||'company.com'}`} value={email} onChange={e=>setEmail(e.target.value)} required />
           </div>
           <button type="submit" disabled={saving} className="w-full py-2.5 rounded-lg bg-teal-700 text-white font-semibold disabled:opacity-40">
             {saving?'Adding…':'Add Team Member'}
@@ -8179,7 +8179,7 @@ function InsightsView() {
         {showLegend && (
           <div style={{ padding:'0 16px 16px', display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:10 }}>
             {[
-              { term:'EV (Expected Value)', color:'#602DF5', desc:'Estimated annual revenue Ontop earns if this contractor fully adopts the product — based on their comp, wallet, card spend, and AUM.' },
+              { term:'EV (Expected Value)', color:'var(--accent)', desc:`Estimated annual revenue ${CLIENT_CONFIG.brand.name} earns if this lead fully adopts the product — based on their data.` },
               { term:'WV (Weighted Value)', color:'#7A50F7', desc:'EV × stage probability. Accounts for the chance of converting. Used to size and prioritize the pipeline.' },
               { term:'EV Pool', color:'#602DF5', desc:'Sum of EV across all qualifying contractors for this product. The total annual revenue opportunity if everyone converted.' },
               { term:'Avg EV', color:'#1A1630', desc:'Average expected value per contractor. High avg EV means each individual deal is more valuable.' },
@@ -8338,7 +8338,7 @@ function InsightsView() {
                   { h:'Product', tip:'' },
                   { h:'Team', tip:'Which team owns outreach for this product.' },
                   { h:'Candidates', tip:'Contractors whose financial profile qualifies them for this product, detected automatically.' },
-                  { h:'EV Pool', tip:'Expected Value pool — total annual revenue Ontop would earn if every candidate converted to this product. Ranked highest to lowest.' },
+                  { h:'EV Pool', tip:`Expected Value pool — total annual revenue ${CLIENT_CONFIG.brand.name} would earn if every candidate converted to this product. Ranked highest to lowest.` },
                   { h:'Avg EV', tip:'Average Expected Value per contractor. Higher means each individual converted deal is worth more revenue.' },
                   { h:'High Quality', tip:'Candidates with strong financial signals (high wallet, comp, or spend) — most likely to convert.' },
                   { h:'Coverage', tip:'Share of candidates with an open opportunity already in the pipeline. Red = large untapped pool.' },
@@ -10644,7 +10644,7 @@ function SuggestAudiencesModal({ onClose, onCreateAudience }) {
     if (noContract || wantsGA) {
       const walletLabel = walletMin ? ` with wallet > ${fmt.currency(walletMin,true)}` : ' holding funds';
       title = `Inactive Contractors${walletLabel}${ctryLabel} — Personal Account`;
-      rationale = `Inactive contractors${walletMin?` with wallet balance over ${fmt.currency(walletMin,true)}`:'who still hold funds'}${ctryLabel} are warm Personal Account targets. They already know Ontop — just need a reason to return.`;
+      rationale = `Inactive leads${walletMin?` with balance over ${fmt.currency(walletMin,true)}`:'who still hold funds'}${ctryLabel} are warm re-engagement targets — they already know ${CLIENT_CONFIG.brand.name}.`;
       segment = 'GLOBAL_ACCOUNT'; icon = '🌐'; color = '#fb923c';
     } else if (wantsBoth || (wantsReserve && wantsFF)) {
       title = `Reserve Subscribers — Future Fund Cross-sell${ctryLabel}`;
