@@ -1278,6 +1278,30 @@ try {
   }
 } catch(e) { console.warn('Supabase init failed', e); }
 
+async function loadClientConfigFromSupabase() {
+  if (!SB) return null;
+  try {
+    const { data } = await SB.from('crm_client_config').select('*').order('created_at').limit(1).maybeSingle();
+    if (!data) return null;
+    return {
+      brand: data.brand_json || {},
+      fields: data.fields_json || [],
+      products: data.products_json || [],
+      teams: data.teams_json || [],
+      sellingFactors: data.selling_factors_json || [],
+      unitEconomics: data.unit_economics_json || {},
+      leadScoreWeights: data.lead_score_weights_json || [],
+      analyticsWidgets: data.analytics_widgets_json || [],
+      primaryKey: data.primary_key_field || 'customer_id',
+      statusField: data.status_field || 'contract_state',
+      statusValues: data.status_values_json || {},
+    };
+  } catch(e) {
+    console.warn('[Config] Failed to load from Supabase:', e);
+    return null;
+  }
+}
+
 // ─── AUTH GATE + SSO SYNC ───────────────────────────────────────────────────
 const ALLOWED_DOMAIN = CLIENT_CONFIG.brand.allowedDomain || '';
 const CRM_URL = window.location.origin + window.location.pathname;
@@ -1635,7 +1659,28 @@ function ClientSetupWizard() {
     const config = buildConfig();
     try { localStorage.setItem('CRM_CLIENT_CONFIG', JSON.stringify(config)); } catch(e2) {}
     try {
-      if (SB) await SB.from('crm_client_config').upsert({ id: 1, config });
+      if (SB) {
+        const row = {
+          brand_json: config.brand,
+          fields_json: config.fields,
+          products_json: config.products,
+          teams_json: config.teams,
+          selling_factors_json: config.sellingFactors,
+          unit_economics_json: config.unitEconomics,
+          lead_score_weights_json: config.leadScoreWeights,
+          analytics_widgets_json: config.analyticsWidgets,
+          primary_key_field: config.primaryKey,
+          status_field: config.statusField,
+          status_values_json: config.statusValues,
+          updated_at: new Date().toISOString(),
+        };
+        const { data: existing } = await SB.from('crm_client_config').select('id').limit(1).maybeSingle();
+        if (existing) {
+          await SB.from('crm_client_config').update(row).eq('id', existing.id);
+        } else {
+          await SB.from('crm_client_config').insert(row);
+        }
+      }
     } catch(e3) {}
     window.location.reload();
   }
@@ -2086,7 +2131,25 @@ alter table crm_opportunities enable row level security;
 create policy "Allow all" on crm_opportunities for all using (true) with check (true);
 create index if not exists idx_opp_contractor on crm_opportunities(contractor_id);
 create index if not exists idx_opp_team_stage on crm_opportunities(team, pipeline_stage);
-create index if not exists idx_opp_closed on crm_opportunities(closed_at);`;
+create index if not exists idx_opp_closed on crm_opportunities(closed_at);
+create table if not exists crm_client_config (
+  id uuid primary key default gen_random_uuid(),
+  brand_json jsonb not null default '{}',
+  fields_json jsonb not null default '[]',
+  products_json jsonb not null default '[]',
+  teams_json jsonb not null default '[]',
+  selling_factors_json jsonb not null default '[]',
+  unit_economics_json jsonb not null default '{}',
+  lead_score_weights_json jsonb not null default '[]',
+  analytics_widgets_json jsonb not null default '[]',
+  primary_key_field text default 'customer_id',
+  status_field text default 'contract_state',
+  status_values_json jsonb default '{}',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table crm_client_config enable row level security;
+create policy "Allow all" on crm_client_config for all using (true) with check (true);`;
 
 // ─── UTILITIES ──────────────────────────────────────────────────────────────
 const fmt = {
@@ -12544,6 +12607,21 @@ function AnalyticsSettingsView() {
   const widgets = ONSIGHT_WIDGET_CATALOG;
   const categories = [...new Set(widgets.map(w => w.category || 'General'))];
   const source = (CLIENT_CONFIG.analyticsWidgets && CLIENT_CONFIG.analyticsWidgets.length > 0) ? 'Client file' : 'Auto-generated';
+  const [resetting, setResetting] = React.useState(false);
+
+  async function handleResetConfig() {
+    if (!window.confirm('Reset configuration for ALL users? This deletes the saved CLIENT_CONFIG from Supabase and restarts setup.')) return;
+    setResetting(true);
+    try {
+      if (SB) {
+        const { data: existing } = await SB.from('crm_client_config').select('id').limit(1).maybeSingle();
+        if (existing) await SB.from('crm_client_config').delete().eq('id', existing.id);
+      }
+    } catch(e) { console.warn('[Config] Failed to delete from Supabase:', e); }
+    try { localStorage.removeItem('CRM_CLIENT_CONFIG'); } catch(e2) {}
+    window.location.reload();
+  }
+
   return (
     <div style={{background:'#F5F4FA',minHeight:'100vh',padding:32}}>
       <div style={{maxWidth:700,margin:'0 auto'}}>
@@ -12575,6 +12653,16 @@ function AnalyticsSettingsView() {
               </div>
             ))}
           </div>
+        </div>
+        <div style={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:12,padding:20,marginTop:16}}>
+          <div style={{fontSize:12,fontWeight:600,color:'#1A1630',marginBottom:8}}>Reconfigure</div>
+          <p style={{fontSize:11,color:'#9590C0',marginBottom:12,lineHeight:1.6}}>
+            Resetting clears the saved configuration for all users and restarts the setup wizard on next load.
+          </p>
+          <button onClick={handleResetConfig} disabled={resetting}
+            style={{fontSize:12,padding:'8px 16px',borderRadius:8,background:resetting?'#F5F4FA':'#FEF2F2',border:'0.5px solid #FCA5A5',color:resetting?'#B8B4D4':'#DC2626',cursor:resetting?'not-allowed':'pointer',fontWeight:600}}>
+            {resetting ? 'Resetting…' : 'Reset configuration'}
+          </button>
         </div>
       </div>
     </div>
@@ -12705,11 +12793,36 @@ function CRMApp({ ssoUser }) {
 }
 
 const _hasCRMConfig = !!_RAW_CLIENT_CONFIG;
-ReactDOM.createRoot(document.getElementById('crm-root')).render(
-  _hasCRMConfig
+
+function ConfigBootGate() {
+  const [checked, setChecked] = React.useState(_hasCRMConfig || !SB);
+
+  React.useEffect(() => {
+    if (checked) return;
+    loadClientConfigFromSupabase().then(cfg => {
+      if (cfg) {
+        try { localStorage.setItem('CRM_CLIENT_CONFIG', JSON.stringify(cfg)); } catch(e) {}
+        window.location.reload();
+      } else {
+        setChecked(true);
+      }
+    });
+  }, [checked]);
+
+  if (!checked) {
+    return (
+      <div style={{minHeight:'100vh',background:'linear-gradient(135deg,#000000,#291960)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <div style={{color:'rgba(255,255,255,0.6)',fontFamily:'Poppins,sans-serif',fontSize:13}}>Loading configuration…</div>
+      </div>
+    );
+  }
+
+  return _hasCRMConfig
     ? <AuthGate><CRMApp /></AuthGate>
-    : <ClientSetupWizard />
-);
+    : <ClientSetupWizard />;
+}
+
+ReactDOM.createRoot(document.getElementById('crm-root')).render(<ConfigBootGate />);
 </script>
 </body>
 </html>
