@@ -346,28 +346,20 @@ const CLIENT_CONFIG = _RAW_CLIENT_CONFIG || {
     allowedDomain: '',
   },
   fields: [
-    { key:'wallet',        label:'Wallet Balance',        type:'number',  format:'currency' },
-    { key:'ff_net',        label:'Future Fund Balance',   type:'number',  format:'currency' },
-    { key:'card_spend',    label:'Lifetime Card Spend',   type:'number',  format:'currency' },
-    { key:'comp',          label:'Monthly Compensation',  type:'number',  format:'currency' },
-    { key:'card_balance',  label:'Card Balance',          type:'number',  format:'currency' },
-    { key:'txn_count',     label:'Card Transactions',     type:'number',  format:'number'   },
-    { key:'days_since',    label:'Days on Platform',      type:'number',  format:'number'   },
-    { key:'country',       label:'Country',               type:'string',  format:'text'     },
-    { key:'contract_type', label:'Contract Type',         type:'string',  format:'text'     },
-    { key:'contract_state',label:'Contract State',        type:'string',  format:'select',  options:['ACTIVE','ENDED','DELETED','NEW','WAITING FOR CONTRACTOR'] },
-    { key:'is_reserve',    label:'Reserve Subscriber',    type:'boolean', format:'boolean'  },
-    { key:'lead_score',    label:'Lead Score',            type:'number',  format:'number'   },
-    { key:'team',          label:'Assigned Team',         type:'string',  format:'team'     },
-    { key:'engagement_level', label:'Engagement Level',  type:'string',  format:'select',  options:['Active','Idle','Churn Risk','Dormant','Never Active'] },
-    { key:'has_card',      label:'Has Card',              type:'boolean', format:'boolean'  },
-    { key:'has_card_virtual', label:'Has Virtual Card',   type:'boolean', format:'boolean'  },
-    { key:'account_type',  label:'Account Type',          type:'string',  format:'select',  options:['Payroll Account','Personal Account','Global Account','Other'] },
-    { key:'has_active_contract', label:'Has Active Contract', type:'boolean', format:'boolean' },
-    { key:'consecutive_payroll_months', label:'Consecutive Payroll Months', type:'number', format:'number' },
-    { key:'recent_activity_bucket', label:'Recent Activity', type:'string', format:'select', options:['ACTIVE','INACTIVE'] },
-    { key:'consistency_bucket', label:'Consistency',     type:'string',  format:'select',  options:['CORE','MID','OCCASIONAL'] },
+    { key:'id',             label:'Customer ID',           type:'string',  format:'text'     },
+    { key:'country',        label:'Country',                type:'string',  format:'text'     },
+    { key:'company',        label:'Company',                type:'string',  format:'text'     },
+    { key:'contract_type',  label:'Contract Type',          type:'string',  format:'text'     },
+    { key:'contract_state', label:'Contract State',         type:'string',  format:'select',  options:['active','churned','deleted'] },
+    { key:'wallet',         label:'Wallet Balance',         type:'number',  format:'currency' },
+    { key:'comp',           label:'Monthly Compensation',   type:'number',  format:'currency' },
+    { key:'card_spend',     label:'Lifetime Card Spend',    type:'number',  format:'currency' },
+    { key:'days_since',     label:'Days on Platform',       type:'number',  format:'number'   },
+    { key:'engagement_level', label:'Engagement Level',     type:'string',  format:'select',  options:['Active','Idle','Churn Risk','Dormant','Never Active'] },
   ],
+  primaryKey: 'customer_id',
+  statusField: 'contract_state',
+  statusValues: { active: 'active', inactive: ['churned', 'deleted'] },
   products: [
     {
       key: 'Reserve',
@@ -435,6 +427,44 @@ const CLIENT_CONFIG = _RAW_CLIENT_CONFIG || {
 
 // ─── FINANCIAL DATA LOOKUP ─────────────────────────────────────────────────
 const CONTRACTOR_MAP = new Map();
+
+function buildColumnIndex(headers) {
+  const idx = {};
+  (headers || []).forEach((h, i) => { idx[h] = i; });
+  return idx;
+}
+
+if (window.CUSTOMER_DATA && Array.isArray(window.CUSTOMER_DATA.headers) && Array.isArray(window.CUSTOMER_DATA.rows)) {
+  // Generic path: build CONTRACTOR_MAP by column name, driven by CLIENT_CONFIG.fields.
+  const colIdx = buildColumnIndex(window.CUSTOMER_DATA.headers);
+  const primaryKey = CLIENT_CONFIG.primaryKey || 'customer_id';
+  const statusField = CLIENT_CONFIG.statusField || 'contract_state';
+  const statusValues = CLIENT_CONFIG.statusValues || { active: 'active', inactive: ['churned', 'deleted'] };
+  const inactiveValues = Array.isArray(statusValues.inactive) ? statusValues.inactive : [statusValues.inactive];
+
+  window.CUSTOMER_DATA.rows.forEach(r => {
+    const idIdx = colIdx[primaryKey];
+    const id = idIdx !== undefined ? r[idIdx] : undefined;
+    if (id === undefined || id === null) return;
+
+    const record = { id };
+    (CLIENT_CONFIG.fields || []).forEach(f => {
+      const i = colIdx[f.key];
+      if (i === undefined) return;
+      const raw = r[i];
+      if (f.type === 'number') record[f.key] = +raw || 0;
+      else if (f.type === 'boolean') record[f.key] = raw === 1 || raw === '1' || raw === true;
+      else record[f.key] = raw ?? null;
+    });
+
+    const statusRaw = record[statusField];
+    record.contract_state = inactiveValues.includes(statusRaw) ? 'ENDED' : 'ACTIVE';
+    record.has_active_contract = record.contract_state === 'ACTIVE';
+
+    CONTRACTOR_MAP.set(id, record);
+  });
+} else {
+
 (window.UPSELL_DATA?.rows || []).forEach(r => {
   CONTRACTOR_MAP.set(r[0], {
     id:r[0], country:r[1]||'', comp:+r[2]||0, wallet:+r[3]||0,
@@ -477,6 +507,8 @@ const CONTRACTOR_MAP = new Map();
     });
   }
 });
+
+}
 
 // ─── LEAD SCORE ─────────────────────────────────────────────────────────────
 function computeLeadScore(r) {
