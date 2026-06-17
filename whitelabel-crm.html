@@ -360,6 +360,16 @@ const CLIENT_CONFIG = _RAW_CLIENT_CONFIG || {
   primaryKey: 'customer_id',
   statusField: 'contract_state',
   statusValues: { active: 'active', inactive: ['churned', 'deleted'] },
+  leadScoreWeights: [
+    { field:'mrr', thresholds:[{above:5000,points:25},{above:1000,points:15},{above:0,points:5}] },
+    { field:'days_as_customer', thresholds:[{above:365,points:15},{above:90,points:8},{above:0,points:3}] },
+    { field:'contract_state', equals:'active', points:15 },
+    { field:'engagement_level', equals:'high', points:10 },
+  ],
+  teams: [
+    { key:'DEFAULT', label:'Sales', color:'#602DF5',
+      routingRules:[] }
+  ],
   products: [
     {
       key: 'Reserve',
@@ -513,19 +523,20 @@ if (window.CUSTOMER_DATA && Array.isArray(window.CUSTOMER_DATA.headers) && Array
 // ─── LEAD SCORE ─────────────────────────────────────────────────────────────
 function computeLeadScore(r) {
   if (!r) return 0;
+  const weights = CLIENT_CONFIG.leadScoreWeights || [];
+  if (weights.length === 0) return 50; // neutral default when not configured
   let s = 0;
-  const comp = r.comp||0;
-  s += comp>3000?25:comp>1000?15:5;
-  const spend = r.card_spend||0;
-  s += spend>5000?25:spend>1000?15:5;
-  const wallet = r.wallet||0;
-  s += wallet>2000?20:wallet>500?10:3;
-  const tenure = r.days_since||0;
-  s += tenure>180?15:tenure>90?8:3;
-  if (r.contract_state==='ACTIVE') s+=15;
-  else if ((r.days_since_ended||999)<60) s+=8;
-  else s+=2;
-  return Math.min(100,s);
+  weights.forEach(w => {
+    const val = r[w.field] ?? 0;
+    if (w.thresholds) {
+      // sorted descending — first match wins
+      const match = [...w.thresholds].sort((a,b)=>b.above-a.above).find(t => val > t.above);
+      if (match) s += match.points;
+    } else if (w.equals !== undefined) {
+      if (String(val).toLowerCase() === String(w.equals).toLowerCase()) s += w.points;
+    }
+  });
+  return Math.min(100, s);
 }
 
 // ─── OPPORTUNITY LIFECYCLE ───────────────────────────────────────────────────
@@ -656,16 +667,16 @@ function getOpportunityStatus(crmRec) {
 }
 
 // ─── TEAM CONSTANTS ─────────────────────────────────────────────────────────
-const TEAMS = {
-  ACTIVATION:        { label:'Activation',       color:'#C17D3A', bg:'rgba(193,125,58,0.08)'  },
-  WORKFORCE_SUCCESS: { label:'Workforce Success', color:'#2E2318', bg:'rgba(46,35,24,0.08)'  },
-  MARKETING:         { label:'Marketing',         color:'#7A50F7', bg:'rgba(122,80,247,0.08)' },
-};
-
-const TEAM_CONFIG = {
-  HIGH_BALANCE_THRESHOLD: 50000,
-  NEW_CONTRACTOR_DAYS: 90,
-};
+function buildTeamsFromConfig() {
+  const teams = {};
+  (CLIENT_CONFIG.teams || []).forEach(t => {
+    teams[t.key] = { label: t.label, color: t.color, bg: t.color + '15' };
+  });
+  return Object.keys(teams).length > 0 ? teams : {
+    DEFAULT: { label:'Sales', color:'#602DF5', bg:'rgba(96,45,245,0.08)' },
+  };
+}
+const TEAMS = buildTeamsFromConfig();
 
 /*
  * MIGRATION GUIDE — Moving from Onsight to direct DB
@@ -992,40 +1003,28 @@ function detectDuplicates(contractors, interactions, conversions) {
 }
 
 function assignTeam(fin) {
-  if (!fin) return ['ACTIVATION'];
-  const totalBalance = (fin.wallet || 0) + (fin.ff_net || 0);
-  const state = fin.contract_state || 'ACTIVE';
-  const days = fin.days_since || 0;
-  const teams = [];
-
-  // Rule 1 — Ended/Deleted with balance → Workforce Success
-  if (['ENDED','DELETED'].includes(state) && totalBalance > 0) {
-    teams.push('WORKFORCE_SUCCESS');
+  const configTeams = CLIENT_CONFIG.teams || [];
+  // Evaluate each team's routing rules in order; first match wins
+  for (const team of configTeams) {
+    const rules = team.routingRules || [];
+    if (rules.length === 0) continue;
+    const matches = rules.every(rule => {
+      const val = fin[rule.field];
+      switch (rule.op) {
+        case '=':   return String(val||'').toLowerCase() === String(rule.value||'').toLowerCase();
+        case '!=':  return String(val||'').toLowerCase() !== String(rule.value||'').toLowerCase();
+        case '>':   return Number(val||0) > Number(rule.value);
+        case '>=':  return Number(val||0) >= Number(rule.value);
+        case '<':   return Number(val||0) < Number(rule.value);
+        case '<=':  return Number(val||0) <= Number(rule.value);
+        case 'in':  return (rule.value||[]).includes(val);
+        default:    return false;
+      }
+    });
+    if (matches) return [team.key];
   }
-  // Rule 2 — New contractor → Activation
-  else if (days < TEAM_CONFIG.NEW_CONTRACTOR_DAYS) {
-    teams.push('ACTIVATION');
-  }
-  // Rule 3 — High balance → Workforce Success
-  else if (totalBalance > TEAM_CONFIG.HIGH_BALANCE_THRESHOLD) {
-    teams.push('WORKFORCE_SUCCESS');
-  }
-  // Rule 4 — Default → Activation
-  else {
-    teams.push('ACTIVATION');
-  }
-
-  // Secondary team — if contractor has multi-product opportunities
-  if (!fin.is_reserve && !teams.includes('ACTIVATION')) {
-    teams.push('ACTIVATION');
-  }
-  if ((!fin.ff_net || fin.ff_net <= 0) &&
-      totalBalance > 2000 &&
-      !teams.includes('WORKFORCE_SUCCESS')) {
-    teams.push('WORKFORCE_SUCCESS');
-  }
-
-  return teams;
+  // Default: first team in config, or 'DEFAULT'
+  return [configTeams[0]?.key || 'DEFAULT'];
 }
 
 function primaryTeam(fin) {
