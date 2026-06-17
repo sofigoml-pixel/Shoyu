@@ -347,15 +347,15 @@ const CLIENT_CONFIG = _RAW_CLIENT_CONFIG || {
   },
   fields: [
     { key:'id',             label:'Customer ID',           type:'string',  format:'text'     },
-    { key:'country',        label:'Country',                type:'string',  format:'text'     },
+    { key:'country',        label:'Country',                type:'string',  format:'text',    filterable:true },
     { key:'company',        label:'Company',                type:'string',  format:'text'     },
     { key:'contract_type',  label:'Contract Type',          type:'string',  format:'text'     },
-    { key:'contract_state', label:'Contract State',         type:'string',  format:'select',  options:['active','churned','deleted'] },
-    { key:'wallet',         label:'Wallet Balance',         type:'number',  format:'currency' },
-    { key:'comp',           label:'Monthly Compensation',   type:'number',  format:'currency' },
-    { key:'card_spend',     label:'Lifetime Card Spend',    type:'number',  format:'currency' },
+    { key:'contract_state', label:'Contract State',         type:'string',  format:'select',  options:['active','churned','deleted'], filterable:true },
+    { key:'wallet',         label:'Wallet Balance',         type:'number',  format:'currency', filterable:true },
+    { key:'comp',           label:'Monthly Compensation',   type:'number',  format:'currency', filterable:true },
+    { key:'card_spend',     label:'Lifetime Card Spend',    type:'number',  format:'currency', filterable:true },
     { key:'days_since',     label:'Days on Platform',       type:'number',  format:'number'   },
-    { key:'engagement_level', label:'Engagement Level',     type:'string',  format:'select',  options:['Active','Idle','Churn Risk','Dormant','Never Active'] },
+    { key:'engagement_level', label:'Engagement Level',     type:'string',  format:'select',  options:['Active','Idle','Churn Risk','Dormant','Never Active'], filterable:true },
   ],
   primaryKey: 'customer_id',
   statusField: 'contract_state',
@@ -420,19 +420,7 @@ const CLIENT_CONFIG = _RAW_CLIENT_CONFIG || {
       opportunity_expiry_days: 90,
     },
   },
-  analyticsWidgets: (function() {
-    // Auto-generate widgets from default fields
-    const numericFields = ['wallet','ff_net','card_spend','comp','card_balance','txn_count','days_since','consecutive_payroll_months'];
-    const stringFields = ['country','contract_type','contract_state','engagement_level','account_type','recent_activity_bucket','consistency_bucket'];
-    const widgets = [];
-    numericFields.forEach(f => {
-      widgets.push({ type:'auto_sum_'+f, label: f.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())+' by Country', category:'Overview', x_field:'country', y_field:f, y_label:f, aggregation:'sum', chart_type:'bar', description:'Sum of '+f+' grouped by country' });
-    });
-    stringFields.forEach(f => {
-      widgets.push({ type:'auto_count_'+f, label:'Breakdown by '+f.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()), category:'Overview', x_field:f, y_field:'count', y_label:'Count', aggregation:'count', chart_type:'bar', description:'Count of records grouped by '+f });
-    });
-    return widgets;
-  })(),
+  analyticsWidgets: [],
 };
 
 // ─── FINANCIAL DATA LOOKUP ─────────────────────────────────────────────────
@@ -1459,7 +1447,7 @@ function ClientSetupWizard() {
   const [allowedDomain, setAllowedDomain] = React.useState('');
   const [err, setErr] = React.useState('');
   const [step, setStep] = React.useState(1);
-  const allWidgets = getAnalyticsWidgets();
+  const allWidgets = buildAnalyticsWidgetCatalog();
   const [checkedWidgetIndices, setCheckedWidgetIndices] = React.useState(() => new Set(allWidgets.map((_, i) => i)));
 
   const S = {
@@ -1476,7 +1464,7 @@ function ClientSetupWizard() {
   function handleSave() {
     if (!brandName.trim()) { setErr('Brand name is required.'); return; }
     if (!allowedDomain.trim()) { setErr('Allowed email domain is required (e.g. company.com).'); return; }
-    const allWidgets = getAnalyticsWidgets();
+    const allWidgets = buildAnalyticsWidgetCatalog();
     const checkedWidgets = allWidgets.filter((_, i) => checkedWidgetIndices.has(i));
     const config = {
       brand: { name: brandName.trim(), primaryColor, logoUrl: logoUrl.trim(), allowedDomain: allowedDomain.trim().replace(/^@/,'') },
@@ -3366,12 +3354,131 @@ const WIDGET_CATALOG = [
   { type:'segment_pie',         label:'Segment Pie',             size:'md', icon:'🥧', desc:'Visual donut chart of pipeline by upsell segment' },
 ];
 
-// ─── ONSIGHT WIDGET CATALOG ──────────────────────────────────────────────────
-function getAnalyticsWidgets() {
-  return CLIENT_CONFIG.analyticsWidgets || [];
+// ─── ANALYTICS WIDGET CATALOG ────────────────────────────────────────────────
+function buildAnalyticsWidgetCatalog() {
+  // If client has defined explicit widgets, use those
+  if (CLIENT_CONFIG.analyticsWidgets && CLIENT_CONFIG.analyticsWidgets.length > 0) {
+    return CLIENT_CONFIG.analyticsWidgets.map(w => ({
+      type: w.type || `auto_${w.x_field}_${w.y_field}`,
+      label: w.label,
+      desc: w.description || '',
+      icon: w.icon || '📊',
+      category: w.category || 'Overview',
+      x_field: w.x_field,
+      y_field: w.y_field,
+      y_aggregation: w.y_aggregation || 'count',
+      y_label: w.y_label || w.y_field,
+      chart_type: w.chart_type || 'bar',
+      drill_down_field: w.drill_down_field || null,
+      source: 'client',
+    }));
+  }
+  // Auto-generate from fields
+  const widgets = [];
+  const fields = CLIENT_CONFIG.fields || [];
+  const primaryKey = CLIENT_CONFIG.primaryKey || 'customer_id';
+  fields.forEach(f => {
+    if (!f.filterable) return;
+    if (f.type === 'string' && f.format === 'select') {
+      widgets.push({
+        type: `auto_${f.key}_count`,
+        label: `${f.label} Breakdown`,
+        desc: `Contact count by ${f.label.toLowerCase()}`,
+        icon: '📊', category: 'Overview',
+        x_field: f.key, y_field: primaryKey,
+        y_aggregation: 'count', y_label: 'Contacts',
+        chart_type: 'bar', drill_down_field: f.key, source: 'auto',
+      });
+    }
+    if (f.type === 'string' && f.key === 'country') {
+      widgets.push({
+        type: 'auto_country_count',
+        label: 'Contacts by Country', desc: 'Contact count per country',
+        icon: '🌍', category: 'Overview',
+        x_field: 'country', y_field: primaryKey,
+        y_aggregation: 'count', y_label: 'Contacts',
+        chart_type: 'bar', drill_down_field: 'country', source: 'auto',
+      });
+    }
+    if (f.type === 'number' && f.format === 'currency') {
+      // Revenue by country if country exists
+      const hasCountry = fields.some(x => x.key === 'country');
+      if (hasCountry) {
+        widgets.push({
+          type: `auto_${f.key}_by_country`,
+          label: `${f.label} by Country`,
+          desc: `Total ${f.label.toLowerCase()} per country`,
+          icon: '💰', category: 'Revenue',
+          x_field: 'country', y_field: f.key,
+          y_aggregation: 'sum', y_label: f.label,
+          chart_type: 'bar', drill_down_field: 'country', source: 'auto',
+        });
+      }
+      // Revenue distribution
+      widgets.push({
+        type: `auto_${f.key}_dist`,
+        label: `${f.label} Distribution`,
+        desc: `How ${f.label.toLowerCase()} is distributed`,
+        icon: '📈', category: 'Revenue',
+        x_field: `__bucket_${f.key}`, y_field: primaryKey,
+        y_aggregation: 'count', y_label: 'Contacts',
+        chart_type: 'bar', source: 'auto', bucket_field: f.key,
+        buckets: [0, 500, 1000, 5000, 10000],
+      });
+    }
+  });
+  return widgets;
 }
-const ONSIGHT_WIDGET_CATALOG = getAnalyticsWidgets();
-const ONSIGHT_WIDGET_CATEGORIES = [...new Set(ONSIGHT_WIDGET_CATALOG.map(w => w.category || 'General'))];
+const ONSIGHT_WIDGET_CATALOG = buildAnalyticsWidgetCatalog();
+const ONSIGHT_WIDGET_CATEGORIES = [...new Set(ONSIGHT_WIDGET_CATALOG.map(w => w.category))];
+
+function computeWidgetData(widget) {
+  const rows = [...CONTRACTOR_MAP.values()];
+  const primaryKey = CLIENT_CONFIG.primaryKey || 'customer_id';
+
+  // Handle bucketed fields
+  if (widget.bucket_field && widget.buckets) {
+    const buckets = widget.buckets;
+    const counts = {};
+    buckets.forEach((b, i) => {
+      const next = buckets[i+1];
+      const label = next ? `$${b.toLocaleString()}–$${next.toLocaleString()}` : `$${b.toLocaleString()}+`;
+      counts[label] = { label, count: 0, min: b, max: next || Infinity };
+    });
+    rows.forEach(r => {
+      const val = Number(r[widget.bucket_field] || 0);
+      for (const b of [...buckets].reverse()) {
+        if (val >= b) {
+          const next = buckets[buckets.indexOf(b)+1];
+          const label = next ? `$${b.toLocaleString()}–$${next.toLocaleString()}` : `$${b.toLocaleString()}+`;
+          if (counts[label]) counts[label].count++;
+          break;
+        }
+      }
+    });
+    return Object.values(counts).map(b => ({ [widget.x_field]: b.label, value: b.count }));
+  }
+
+  // Group by x_field
+  const groups = {};
+  rows.forEach(r => {
+    const key = r[widget.x_field] || 'Unknown';
+    if (!groups[key]) groups[key] = { key, rows: [] };
+    groups[key].rows.push(r);
+  });
+
+  return Object.values(groups).map(g => {
+    let value;
+    switch (widget.y_aggregation) {
+      case 'count': value = g.rows.length; break;
+      case 'sum':   value = g.rows.reduce((s,r) => s + Number(r[widget.y_field]||0), 0); break;
+      case 'avg':   value = g.rows.reduce((s,r) => s + Number(r[widget.y_field]||0), 0) / g.rows.length; break;
+      case 'rate':  value = (g.rows.filter(r => r[widget.y_field]).length / g.rows.length) * 100; break;
+      default:      value = g.rows.length;
+    }
+    return { [widget.x_field]: g.key, value: Math.round(value * 100) / 100 };
+  }).sort((a,b) => b.value - a.value).slice(0, 20);
+}
 
 const WIDGET_SIZE_COLS = { sm: 1, md: 2, lg: 2 };
 const WIDGET_SIZE_ROWS = { sm: 1, md: 1, lg: 2 };
@@ -3675,55 +3782,16 @@ function WidgetCard({ widget, onRemove, editMode, users }) {
 }
 
 function OnsightWidgetCard({ widget, onDrillDown, refreshKey }) {
-  const [data, setData] = React.useState([]);
   const [viewMode, setViewMode] = React.useState(widget.chart_type || 'bar');
-  const [loading, setLoading] = React.useState(true);
-
-  React.useEffect(() => {
-    setLoading(true);
-    try {
-      const agg = widget.aggregation || 'count';
-      const xField = widget.x_field;
-      const yField = widget.y_field;
-      const groups = {};
-
-      for (const [, fin] of CONTRACTOR_MAP) {
-        const key = String(fin[xField] || '(none)');
-        if (!groups[key]) groups[key] = { _count: 0, _sum: 0, _values: [] };
-        groups[key]._count += 1;
-        const numVal = Number(fin[yField]) || 0;
-        groups[key]._sum += numVal;
-        groups[key]._values.push(numVal);
-        if (agg === 'rate' && fin[yField]) groups[key]._truthy = (groups[key]._truthy || 0) + 1;
-      }
-
-      const rows = Object.entries(groups).map(([k, g]) => {
-        let yVal;
-        if (agg === 'count') yVal = g._count;
-        else if (agg === 'sum') yVal = Math.round(g._sum * 100) / 100;
-        else if (agg === 'avg') yVal = g._count > 0 ? Math.round(g._sum / g._count * 100) / 100 : 0;
-        else if (agg === 'rate') yVal = g._count > 0 ? Math.round((g._truthy || 0) / g._count * 10000) / 100 : 0;
-        else yVal = g._count;
-        return { [xField]: k, [yField === 'count' ? 'count' : yField]: yVal, _count: g._count };
-      });
-
-      rows.sort((a, b) => (b[yField === 'count' ? 'count' : yField] || 0) - (a[yField === 'count' ? 'count' : yField] || 0));
-      setData(rows.slice(0, 25));
-    } catch(e) {
-      console.warn('AnalyticsWidgetCard error:', e);
-      setData([]);
-    }
-    setLoading(false);
-  }, [widget.type, refreshKey]);
-
-  const yKey = widget.y_field === 'count' ? 'count' : widget.y_field;
+  const data = React.useMemo(() => computeWidgetData(widget), [widget, refreshKey]);
+  const yKey = 'value';
 
   return (
     <div className="card p-4" style={{minHeight:220}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
         <div>
           <div style={{fontWeight:600,fontSize:13,color:'var(--text-primary)'}}>{widget.label}</div>
-          {widget.description && <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>{widget.description}</div>}
+          {widget.desc && <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>{widget.desc}</div>}
         </div>
         <div style={{display:'flex',gap:4}}>
           <button onClick={()=>setViewMode('bar')} style={{fontSize:11,padding:'2px 8px',borderRadius:6,border:'0.5px solid var(--border-default)',background:viewMode==='bar'?'#602DF5':'var(--bg-subtle)',color:viewMode==='bar'?'#fff':'var(--text-secondary)',cursor:'pointer'}}>Chart</button>
@@ -3731,9 +3799,7 @@ function OnsightWidgetCard({ widget, onDrillDown, refreshKey }) {
         </div>
       </div>
 
-      {loading ? (
-        <div style={{height:140,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:12}}>Loading…</div>
-      ) : data.length === 0 ? (
+      {data.length === 0 ? (
         <div style={{height:140,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:12}}>No data available</div>
       ) : viewMode === 'bar' ? (
         <ResponsiveContainer width="100%" height={160}>
@@ -3826,7 +3892,7 @@ function WidgetPickerModal({ onAdd, onClose }) {
       <div>
         <div style={{fontSize:12,fontWeight:600,color:'#1A1630',marginBottom:2}}>{w.label}</div>
         <div style={{fontSize:10,color:'#9590C0',lineHeight:1.4}}>{w.desc}</div>
-        {isOnsight && <div style={{fontSize:9,marginTop:4,padding:'1px 5px',borderRadius:3,display:'inline-block',background:'rgba(96,45,245,0.08)',color:'#602DF5',fontWeight:500}}>Live Onsight data</div>}
+        {isOnsight && <div style={{fontSize:9,marginTop:4,padding:'1px 5px',borderRadius:3,display:'inline-block',background:'rgba(96,45,245,0.08)',color:'#602DF5',fontWeight:500}}>Live data</div>}
         {!isOnsight && <div style={{marginTop:4,fontSize:10,color:'#B8B4D4'}}>{w.size==='sm'?'Small (1 col)':'Medium (2 col)'}</div>}
       </div>
     </button>
@@ -3864,7 +3930,7 @@ function WidgetPickerModal({ onAdd, onClose }) {
               </div>
             </div>
           )}
-          {/* Onsight widgets */}
+          {/* Analytics widgets */}
           {activeCategory!=='CRM' && !searchingAll && onsightFiltered.length > 0 && (
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
               {onsightFiltered.map(w=><WCard key={w.type} w={w} isOnsight={true} />)}
@@ -3872,7 +3938,7 @@ function WidgetPickerModal({ onAdd, onClose }) {
           )}
           {searchingAll && onsightSearchFiltered.length > 0 && (
             <div>
-              {crmFiltered.length > 0 && <div style={{fontSize:10,fontWeight:600,color:'#9590C0',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:8,marginTop:4}}>Onsight Data</div>}
+              {crmFiltered.length > 0 && <div style={{fontSize:10,fontWeight:600,color:'#9590C0',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:8,marginTop:4}}>Analytics Data</div>}
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
                 {onsightSearchFiltered.map(w=><WCard key={w.type} w={w} isOnsight={true} />)}
               </div>
@@ -4141,7 +4207,7 @@ function CustomDashboardView({ dashboardId }) {
           </div>
         )}
 
-        {/* Onsight widgets — each spans 2 cols */}
+        {/* Analytics widgets — each spans 2 cols */}
         {onsightWidgets.length > 0 && (
           <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:14,marginBottom:16}}>
             {onsightWidgets.map(w => (
@@ -12091,24 +12157,24 @@ function MyDayView() {
   );
 }
 
-function OnsightSnapshotsSettings() {
-  const widgets = getAnalyticsWidgets();
+function AnalyticsSettingsView() {
+  const widgets = ONSIGHT_WIDGET_CATALOG;
   const categories = [...new Set(widgets.map(w => w.category || 'General'))];
-  const recordCount = (window.UPSELL_DATA?.rows?.length||0) + (window.INACTIVE_DATA?.rows?.length||0);
+  const source = (CLIENT_CONFIG.analyticsWidgets && CLIENT_CONFIG.analyticsWidgets.length > 0) ? 'Client file' : 'Auto-generated';
   return (
     <div style={{background:'#F5F4FA',minHeight:'100vh',padding:32}}>
       <div style={{maxWidth:700,margin:'0 auto'}}>
         <div style={{marginBottom:24}}>
           <h2 style={{fontSize:20,fontWeight:700,color:'#1A1630',margin:0}}>Analytics Settings</h2>
           <p style={{fontSize:12,color:'#9590C0',marginTop:6,lineHeight:1.6}}>
-            Analytics widgets read directly from your client data file. No API calls or snapshots needed.
+            Analytics widgets are computed client-side from your loaded data. No API calls or snapshots needed.
           </p>
         </div>
         <div style={{background:'#FFFFFF',border:'0.5px solid #E2DFEF',borderRadius:12,padding:20,marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:600,color:'#1A1630',marginBottom:12}}>Data source</div>
           <div style={{fontSize:12,color:'#9590C0',display:'flex',flexDirection:'column',gap:6}}>
-            <div>📦 <strong>{recordCount.toLocaleString()}</strong> records loaded from client data file</div>
-            <div>📊 <strong>{widgets.length}</strong> analytics widgets configured</div>
+            <div>📦 <strong>{CONTRACTOR_MAP.size.toLocaleString()}</strong> records loaded into CONTRACTOR_MAP</div>
+            <div>📊 <strong>{widgets.length}</strong> analytics widgets configured ({source})</div>
             <div>🗂 Categories: {categories.join(', ') || '—'}</div>
           </div>
         </div>
@@ -12120,7 +12186,7 @@ function OnsightSnapshotsSettings() {
               <div key={w.type} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 12px',borderRadius:8,background:'#F5F4FA',border:'0.5px solid #E2DFEF'}}>
                 <div>
                   <div style={{fontSize:11,fontWeight:600,color:'#1A1630'}}>{w.label}</div>
-                  <div style={{fontSize:10,color:'#B8B4D4'}}>{w.category} · {w.aggregation||'count'} of {w.y_field} by {w.x_field}</div>
+                  <div style={{fontSize:10,color:'#B8B4D4'}}>{w.category} · {w.y_aggregation||'count'} of {w.y_field} by {w.x_field}</div>
                 </div>
                 <span style={{fontSize:10,padding:'2px 8px',borderRadius:999,background:'rgba(96,45,245,0.08)',color:'#602DF5',border:'0.5px solid rgba(96,45,245,0.2)'}}>live</span>
               </div>
@@ -12208,7 +12274,7 @@ function WithNav({ country, setCountry, segment, setSegment, teamFilter, setTeam
   if (path.startsWith('/my-dashboards/')) { const did = path.split('/')[2]; return <>{nav}<CustomDashboardView dashboardId={did} /></>; }
   if (path.startsWith('/my-dashboards')) return <>{nav}<MyDashboardsView /></>;
   if (path.startsWith('/dashboard')) return <>{nav}<DashboardView /></>;
-  if (path.startsWith('/settings')) return <>{nav}<OnsightSnapshotsSettings /></>;
+  if (path.startsWith('/settings')) return <>{nav}<AnalyticsSettingsView /></>;
   return <Navigate to="/myday" replace />;
 }
 
