@@ -32,6 +32,7 @@
   <script src="vendor/contractor-contacts.js" onerror="void 0"></script>
   <script>window.CRM_CONFIG=window.CRM_CONFIG||{};</script>
   <script src="vendor/crm-config.js" onerror="void 0"></script>
+  <script>try{var _cd=localStorage.getItem('CRM_CUSTOMER_DATA');if(_cd)window.CUSTOMER_DATA=JSON.parse(_cd);}catch(e){}</script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -1428,104 +1429,490 @@ function AuthGate({ children }) {
 
 
 // ─── CLIENT SETUP WIZARD ────────────────────────────────────────────────────
+function guessFieldType(values) {
+  const nonEmpty = values.filter(v => v !== '' && v != null);
+  if (nonEmpty.length === 0) return 'string';
+  const isBool = nonEmpty.every(v => ['true','false','0','1'].includes(String(v).toLowerCase()));
+  if (isBool) return 'boolean';
+  const isNum = nonEmpty.every(v => v !== '' && !isNaN(Number(v)));
+  if (isNum) return 'number';
+  return 'string';
+}
+function guessFieldFormat(key, type) {
+  if (type === 'number') {
+    return /revenue|mrr|arr|price|amount|balance/i.test(key) ? 'currency' : 'number';
+  }
+  if (type === 'boolean') return 'boolean';
+  return 'text';
+}
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.length > 0);
+  if (lines.length === 0) return { headers: [], rows: [] };
+  const headers = lines[0].split(',').map(h => h.trim());
+  const rows = lines.slice(1).map(line => line.split(',').map(c => c.trim()));
+  return { headers, rows };
+}
+function guessLeadScoreThresholds(key) {
+  const k = key.toLowerCase();
+  if (/revenue|mrr|arr|wallet|balance|spend/.test(k)) {
+    return [{ above: 5000, points: 25 }, { above: 1000, points: 15 }, { above: 0, points: 5 }];
+  }
+  if (/day|tenure|month/.test(k)) {
+    return [{ above: 365, points: 15 }, { above: 90, points: 8 }, { above: 0, points: 3 }];
+  }
+  return [{ above: 100, points: 15 }, { above: 10, points: 8 }, { above: 0, points: 3 }];
+}
+
 function ClientSetupWizard() {
-  const [brandName, setBrandName] = React.useState('');
-  const [primaryColor, setPrimaryColor] = React.useState('#602DF5');
-  const [logoUrl, setLogoUrl] = React.useState('');
-  const [allowedDomain, setAllowedDomain] = React.useState('');
-  const [err, setErr] = React.useState('');
   const [step, setStep] = React.useState(1);
-  const allWidgets = buildAnalyticsWidgetCatalog();
-  const [checkedWidgetIndices, setCheckedWidgetIndices] = React.useState(() => new Set(allWidgets.map((_, i) => i)));
+  const [err, setErr] = React.useState('');
+
+  // Step 1 — Brand
+  const [brandName, setBrandName] = React.useState('');
+  const [allowedDomain, setAllowedDomain] = React.useState('');
+  const [logoUrl, setLogoUrl] = React.useState('');
+  const [primaryColor, setPrimaryColor] = React.useState('#602DF5');
+
+  // Step 2 — Data file
+  const [csvHeaders, setCsvHeaders] = React.useState([]);
+  const [csvRows, setCsvRows] = React.useState([]);
+  const [fieldConfigs, setFieldConfigs] = React.useState([]);
+  const [primaryKeyCol, setPrimaryKeyCol] = React.useState('');
+  const [statusFieldCol, setStatusFieldCol] = React.useState('');
+  const [activeValue, setActiveValue] = React.useState('active');
+
+  // Step 3 — Teams
+  const [teams, setTeams] = React.useState([{ key:'DEFAULT', label:'Sales', color:'#602DF5', routingRules:[] }]);
+
+  // Step 4 — Products & unit economics
+  const [products, setProducts] = React.useState([{ key:'Product', label:'Product', icon:'📦', color:'#602DF5', defaultTeam:'DEFAULT', revenue:{ model:'fixed', annualValue:100 } }]);
+  const [stageProbabilities, setStageProbabilities] = React.useState({ Identified:10, Contacted:25, Engaged:60, Converted:100, 'Not Interested':0 });
+  const [reEngagementDays, setReEngagementDays] = React.useState({ re_engagement_days_not_interested:90, re_engagement_days_expired:30, re_engagement_days_expired_contacted:60 });
+
+  // Step 5 — Selling factors & lead scoring
+  const [sellingFactors, setSellingFactors] = React.useState([]);
+  const [leadScoreWeights, setLeadScoreWeights] = React.useState([]);
+  const leadScoreSeeded = React.useRef(false);
+
+  React.useEffect(() => {
+    if (leadScoreSeeded.current) return;
+    const numericFields = fieldConfigs.filter(f => f.type === 'number');
+    if (numericFields.length === 0) return;
+    leadScoreSeeded.current = true;
+    setLeadScoreWeights(numericFields.map(f => ({ field: f.key, thresholds: guessLeadScoreThresholds(f.key) })));
+  }, [fieldConfigs]);
 
   const S = {
     overlay: { minHeight:'100vh', background:'linear-gradient(135deg,#000000,#291960)', display:'flex', alignItems:'center', justifyContent:'center', padding:24 },
-    card: { background:'rgba(88,86,183,0.08)', border:'1px solid rgba(122,80,247,0.2)', backdropFilter:'blur(20px)', borderRadius:20, maxWidth:520, width:'100%', padding:36 },
+    card: { background:'rgba(88,86,183,0.08)', border:'1px solid rgba(122,80,247,0.2)', backdropFilter:'blur(20px)', borderRadius:20, maxWidth:680, width:'100%', padding:36, maxHeight:'88vh', overflowY:'auto' },
     h1: { color:'#FFFFFF', fontSize:22, fontWeight:700, marginBottom:6, fontFamily:'Poppins,sans-serif' },
-    sub: { color:'rgba(255,255,255,0.5)', fontSize:13, marginBottom:28, fontFamily:'Poppins,sans-serif' },
+    sub: { color:'rgba(255,255,255,0.5)', fontSize:13, marginBottom:20, fontFamily:'Poppins,sans-serif' },
     label: { display:'block', color:'rgba(255,255,255,0.7)', fontSize:12, fontWeight:600, marginBottom:6, fontFamily:'Poppins,sans-serif' },
     input: { width:'100%', padding:'10px 14px', borderRadius:10, background:'rgba(88,86,183,0.15)', border:'1px solid rgba(122,80,247,0.3)', color:'#fff', fontFamily:'Poppins,sans-serif', fontSize:13, marginBottom:16, outline:'none', boxSizing:'border-box' },
+    smallInput: { padding:'6px 10px', borderRadius:8, background:'rgba(88,86,183,0.15)', border:'1px solid rgba(122,80,247,0.3)', color:'#fff', fontFamily:'Poppins,sans-serif', fontSize:12, outline:'none', boxSizing:'border-box' },
+    select: { padding:'6px 10px', borderRadius:8, background:'rgba(88,86,183,0.15)', border:'1px solid rgba(122,80,247,0.3)', color:'#fff', fontFamily:'Poppins,sans-serif', fontSize:12, outline:'none' },
     btn: { width:'100%', padding:'12px 0', borderRadius:999, background:'linear-gradient(135deg,#602DF5,#7A50F7)', color:'#FFFFFF', fontWeight:600, fontSize:14, border:'none', cursor:'pointer', fontFamily:'Poppins,sans-serif', marginTop:8 },
+    btnSm: { padding:'6px 14px', borderRadius:999, background:'rgba(122,80,247,0.3)', border:'1px solid rgba(122,80,247,0.5)', color:'#fff', fontWeight:600, fontSize:12, cursor:'pointer', fontFamily:'Poppins,sans-serif' },
     errStyle: { color:'#f87171', fontSize:12, marginTop:8, fontFamily:'Poppins,sans-serif' },
+    sectionLabel: { color:'rgba(255,255,255,0.7)', fontSize:12, fontWeight:600, marginBottom:8, fontFamily:'Poppins,sans-serif' },
+    row: { display:'flex', gap:8, alignItems:'center', marginBottom:8, flexWrap:'wrap' },
+    panel: { background:'rgba(88,86,183,0.1)', borderRadius:10, padding:'10px 12px', border:'1px solid rgba(122,80,247,0.2)', marginBottom:10 },
   };
 
-  function handleSave() {
-    if (!brandName.trim()) { setErr('Brand name is required.'); return; }
-    if (!allowedDomain.trim()) { setErr('Allowed email domain is required (e.g. company.com).'); return; }
-    const allWidgets = buildAnalyticsWidgetCatalog();
-    const checkedWidgets = allWidgets.filter((_, i) => checkedWidgetIndices.has(i));
-    const config = {
-      brand: { name: brandName.trim(), primaryColor, logoUrl: logoUrl.trim(), allowedDomain: allowedDomain.trim().replace(/^@/,'') },
-      fields: CLIENT_CONFIG.fields,
-      products: CLIENT_CONFIG.products,
-      sellingFactors: CLIENT_CONFIG.sellingFactors,
-      unitEconomics: CLIENT_CONFIG.unitEconomics,
-      analyticsWidgets: checkedWidgets.length > 0 ? checkedWidgets : allWidgets,
+  function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const { headers, rows } = parseCSV(String(ev.target.result || ''));
+      setCsvHeaders(headers);
+      setCsvRows(rows);
+      const fcs = headers.map((h, i) => {
+        const colValues = rows.map(r => r[i]);
+        const type = guessFieldType(colValues);
+        return { key:h, label:h, type, format:guessFieldFormat(h, type), filterable:false, options:[] };
+      });
+      setFieldConfigs(fcs);
+      setPrimaryKeyCol(headers[0] || '');
+      setStatusFieldCol('');
+      window.CUSTOMER_DATA = { headers, rows };
+      try { localStorage.setItem('CRM_CUSTOMER_DATA', JSON.stringify({ headers, rows })); } catch(e2) {}
     };
+    reader.readAsText(file);
+  }
+
+  function updateFieldConfig(idx, patch) {
+    setFieldConfigs(fcs => fcs.map((f, i) => i === idx ? { ...f, ...patch } : f));
+  }
+
+  function addTeam() {
+    setTeams(t => [...t, { key:'TEAM_'+(t.length+1), label:'New Team', color:'#602DF5', routingRules:[] }]);
+  }
+  function removeTeam(idx) {
+    setTeams(t => t.filter((_, i) => i !== idx));
+  }
+  function updateTeam(idx, patch) {
+    setTeams(t => t.map((tm, i) => {
+      if (i !== idx) return tm;
+      const next = { ...tm, ...patch };
+      if (patch.label !== undefined) next.key = patch.label.trim().toUpperCase().replace(/[^A-Z0-9]+/g,'_').replace(/^_|_$/g,'') || ('TEAM_'+idx);
+      return next;
+    }));
+  }
+  function addTeamRule(idx) {
+    setTeams(t => t.map((tm, i) => i === idx ? { ...tm, routingRules:[...(tm.routingRules||[]), { field: fieldConfigs[0]?.key || '', op:'=', value:'' }] } : tm));
+  }
+  function updateTeamRule(tIdx, rIdx, patch) {
+    setTeams(t => t.map((tm, i) => {
+      if (i !== tIdx) return tm;
+      const rules = (tm.routingRules || []).map((r, j) => j === rIdx ? { ...r, ...patch } : r);
+      return { ...tm, routingRules: rules };
+    }));
+  }
+  function removeTeamRule(tIdx, rIdx) {
+    setTeams(t => t.map((tm, i) => i === tIdx ? { ...tm, routingRules:(tm.routingRules||[]).filter((_, j) => j !== rIdx) } : tm));
+  }
+
+  function addProduct() {
+    setProducts(p => [...p, { key:'Product '+(p.length+1), label:'Product '+(p.length+1), icon:'📦', color:'#602DF5', defaultTeam: teams[0]?.key || 'DEFAULT', revenue:{ model:'fixed', annualValue:100 } }]);
+  }
+  function removeProduct(idx) {
+    setProducts(p => p.filter((_, i) => i !== idx));
+  }
+  function updateProduct(idx, patch) {
+    setProducts(p => p.map((pr, i) => {
+      if (i !== idx) return pr;
+      const next = { ...pr, ...patch };
+      if (patch.label !== undefined) next.key = patch.label;
+      return next;
+    }));
+  }
+  function updateProductRevenue(idx, patch) {
+    setProducts(p => p.map((pr, i) => i === idx ? { ...pr, revenue: { ...pr.revenue, ...patch } } : pr));
+  }
+
+  function addFactor() {
+    setSellingFactors(f => [...f, { if:{ field: fieldConfigs[0]?.key || '', op:'=', value:'' }, product: products[0]?.key || '', quality:'medium', reason:'' }]);
+  }
+  function removeFactor(idx) {
+    setSellingFactors(f => f.filter((_, i) => i !== idx));
+  }
+  function updateFactor(idx, patch) {
+    setSellingFactors(f => f.map((fc, i) => i === idx ? { ...fc, ...patch } : fc));
+  }
+  function updateFactorIf(idx, patch) {
+    setSellingFactors(f => f.map((fc, i) => i === idx ? { ...fc, if:{ ...fc.if, ...patch } } : fc));
+  }
+
+  function updateLeadWeight(idx, patch) {
+    setLeadScoreWeights(w => w.map((lw, i) => i === idx ? { ...lw, ...patch } : lw));
+  }
+  function updateLeadThreshold(wIdx, tIdx, patch) {
+    setLeadScoreWeights(w => w.map((lw, i) => {
+      if (i !== wIdx) return lw;
+      const thresholds = (lw.thresholds || []).map((t, j) => j === tIdx ? { ...t, ...patch } : t);
+      return { ...lw, thresholds };
+    }));
+  }
+
+  function buildConfig() {
+    return {
+      brand: { name: brandName.trim(), primaryColor, logoUrl: logoUrl.trim(), allowedDomain: allowedDomain.trim().replace(/^@/,'') },
+      fields: fieldConfigs.map(f => ({ key:f.key, label:f.label, type:f.type, format:f.format, filterable:f.filterable, ...(f.options?.length ? { options:f.options } : {}) })),
+      primaryKey: primaryKeyCol || (fieldConfigs[0]?.key || 'id'),
+      statusField: statusFieldCol || '',
+      statusValues: { active: activeValue, inactive: [] },
+      teams,
+      products,
+      sellingFactors,
+      leadScoreWeights,
+      unitEconomics: { stageProbabilities, reEngagementDays },
+      analyticsWidgets: [],
+    };
+  }
+
+  async function handleLaunch() {
+    const config = buildConfig();
     try { localStorage.setItem('CRM_CLIENT_CONFIG', JSON.stringify(config)); } catch(e2) {}
+    try {
+      if (SB) await SB.from('crm_client_config').upsert({ id: 1, config });
+    } catch(e3) {}
     window.location.reload();
   }
+
+  function copyConfigJSON() {
+    try { navigator.clipboard.writeText(JSON.stringify(buildConfig(), null, 2)); } catch(e2) {}
+  }
+
+  function goNext() {
+    if (step === 1) {
+      if (!brandName.trim()) { setErr('Company name is required.'); return; }
+      if (!allowedDomain.trim()) { setErr('Email domain is required.'); return; }
+    }
+    setErr('');
+    setStep(s => Math.min(6, s + 1));
+  }
+  function goBack() {
+    setErr('');
+    setStep(s => Math.max(1, s - 1));
+  }
+
+  const stepTitles = ['Brand', 'Data file', 'Teams', 'Products & economics', 'Selling factors', 'Review & launch'];
 
   return (
     <div style={S.overlay}>
       <div style={S.card}>
-        <div style={{width:48,height:48,borderRadius:12,background:'linear-gradient(135deg,#602DF5,#7A50F7)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:24,boxShadow:'0 0 24px rgba(96,45,245,0.4)',fontSize:22}}>⚙️</div>
-        <h1 style={S.h1}>Setup your CRM</h1>
-        <p style={S.sub}>Configure this CRM for your organization. You can change these settings later by clearing localStorage.</p>
-
-        <label style={S.label}>Brand / Company name *</label>
-        <input style={S.input} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="Acme Corp" />
-
-        <label style={S.label}>Allowed email domain for login *</label>
-        <input style={S.input} value={allowedDomain} onChange={e=>setAllowedDomain(e.target.value)} placeholder="acme.com" />
-
-        <label style={S.label}>Logo URL (optional)</label>
-        <input style={S.input} value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} placeholder="https://…/logo.png" />
-
-        <label style={S.label}>Brand color</label>
-        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
-          <input type="color" value={primaryColor} onChange={e=>setPrimaryColor(e.target.value)} style={{width:40,height:40,border:'none',background:'none',cursor:'pointer',borderRadius:8}} />
-          <span style={{color:'rgba(255,255,255,0.5)',fontSize:12,fontFamily:'Poppins,sans-serif'}}>{primaryColor}</span>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+          <div style={{width:48,height:48,borderRadius:12,background:'linear-gradient(135deg,#602DF5,#7A50F7)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 24px rgba(96,45,245,0.4)',fontSize:22}}>⚙️</div>
+          <span style={{color:'rgba(255,255,255,0.5)',fontSize:12,fontFamily:'Poppins,sans-serif'}}>Step {step} of 6</span>
         </div>
+        <h1 style={S.h1}>{stepTitles[step-1]}</h1>
+        <p style={S.sub}>Configure this CRM for your organization.</p>
 
-        {err && <p style={S.errStyle}>{err}</p>}
         {step === 1 && (
-          <button style={S.btn} onClick={() => {
-            if (!brandName.trim()) { setErr('Brand name is required.'); return; }
-            if (!allowedDomain.trim()) { setErr('Allowed email domain is required (e.g. company.com).'); return; }
-            setErr('');
-            setStep(2);
-          }}>Next: Analytics Widgets</button>
-        )}
-        {step === 2 && (
           <div>
-            <div style={{color:'rgba(255,255,255,0.7)',fontSize:12,fontWeight:600,marginBottom:8,fontFamily:'Poppins,sans-serif'}}>Analytics Widgets</div>
-            <p style={{color:'rgba(255,255,255,0.5)',fontSize:12,marginBottom:12,fontFamily:'Poppins,sans-serif'}}>These widgets will appear in your Analytics dashboard, powered by your data file. Deselect any you don&apos;t need.</p>
-            <div style={{display:'flex',gap:8,marginBottom:10}}>
-              <button onClick={()=>setCheckedWidgetIndices(new Set(allWidgets.map((_,i)=>i)))} style={{fontSize:11,padding:'4px 10px',borderRadius:6,background:'rgba(122,80,247,0.3)',border:'1px solid rgba(122,80,247,0.5)',color:'#fff',cursor:'pointer',fontFamily:'Poppins,sans-serif'}}>Select all</button>
-              <button onClick={()=>setCheckedWidgetIndices(new Set())} style={{fontSize:11,padding:'4px 10px',borderRadius:6,background:'rgba(122,80,247,0.3)',border:'1px solid rgba(122,80,247,0.5)',color:'#fff',cursor:'pointer',fontFamily:'Poppins,sans-serif'}}>Deselect all</button>
-            </div>
-            <div style={{maxHeight:240,overflowY:'auto',background:'rgba(88,86,183,0.1)',borderRadius:10,padding:'8px 12px',border:'1px solid rgba(122,80,247,0.2)',marginBottom:16}}>
-              {allWidgets.map((w, i) => (
-                <label key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',cursor:'pointer',fontFamily:'Poppins,sans-serif',fontSize:12,color:'rgba(255,255,255,0.8)'}}>
-                  <input type="checkbox" checked={checkedWidgetIndices.has(i)} onChange={e => {
-                    const next = new Set(checkedWidgetIndices);
-                    e.target.checked ? next.add(i) : next.delete(i);
-                    setCheckedWidgetIndices(next);
-                  }} style={{accentColor:'#602DF5'}} />
-                  {w.label}
-                </label>
-              ))}
-            </div>
-            <div style={{display:'flex',gap:8}}>
-              <button style={{...S.btn,background:'rgba(88,86,183,0.3)',marginTop:0,width:'auto',padding:'12px 24px'}} onClick={()=>setStep(1)}>Back</button>
-              <button style={{...S.btn,marginTop:0,flex:1}} onClick={handleSave}>Get started</button>
+            <label style={S.label}>Company name *</label>
+            <input style={S.input} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="Acme Corp" />
+            <label style={S.label}>Email domain for login *</label>
+            <input style={S.input} value={allowedDomain} onChange={e=>setAllowedDomain(e.target.value)} placeholder="acme.com" />
+            <label style={S.label}>Logo URL (optional)</label>
+            <input style={S.input} value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} placeholder="https://…/logo.png" />
+            <label style={S.label}>Brand color</label>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+              <input type="color" value={primaryColor} onChange={e=>setPrimaryColor(e.target.value)} style={{width:40,height:40,border:'none',background:'none',cursor:'pointer',borderRadius:8}} />
+              <span style={{color:'rgba(255,255,255,0.5)',fontSize:12,fontFamily:'Poppins,sans-serif'}}>{primaryColor}</span>
             </div>
           </div>
         )}
 
+        {step === 2 && (
+          <div>
+            <label style={S.label}>Upload CSV data file</label>
+            <input type="file" accept=".csv" onChange={handleFile} style={{...S.input, padding:8}} />
+            {csvHeaders.length > 0 && (
+              <>
+                <p style={{color:'rgba(255,255,255,0.5)',fontSize:12,marginBottom:10,fontFamily:'Poppins,sans-serif'}}>{csvRows.length.toLocaleString()} rows loaded.</p>
+                <div style={{overflowX:'auto',marginBottom:14}}>
+                  <table style={{borderCollapse:'collapse',fontSize:11,color:'rgba(255,255,255,0.8)',fontFamily:'Poppins,sans-serif'}}>
+                    <thead><tr>{csvHeaders.map(h=><th key={h} style={{textAlign:'left',padding:'4px 8px',borderBottom:'1px solid rgba(122,80,247,0.3)'}}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {csvRows.slice(0,3).map((r,i)=>(
+                        <tr key={i}>{r.map((c,j)=><td key={j} style={{padding:'4px 8px',borderBottom:'1px solid rgba(122,80,247,0.15)'}}>{c}</td>)}</tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={S.sectionLabel}>Column configuration</div>
+                {fieldConfigs.map((f, i) => (
+                  <div key={f.key} style={S.row}>
+                    <span style={{...S.smallInput, minWidth:90, opacity:0.7}}>{f.key}</span>
+                    <input style={S.smallInput} value={f.label} onChange={e=>updateFieldConfig(i,{label:e.target.value})} placeholder="Label" />
+                    <select style={S.select} value={f.type} onChange={e=>updateFieldConfig(i,{type:e.target.value})}>
+                      <option value="number">number</option>
+                      <option value="string">string</option>
+                      <option value="boolean">boolean</option>
+                    </select>
+                    <select style={S.select} value={f.format} onChange={e=>updateFieldConfig(i,{format:e.target.value})}>
+                      <option value="currency">currency</option>
+                      <option value="number">number</option>
+                      <option value="text">text</option>
+                      <option value="select">select</option>
+                      <option value="boolean">boolean</option>
+                    </select>
+                    <label style={{display:'flex',alignItems:'center',gap:4,color:'rgba(255,255,255,0.7)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>
+                      <input type="checkbox" checked={f.filterable} onChange={e=>updateFieldConfig(i,{filterable:e.target.checked})} style={{accentColor:'#602DF5'}} /> filterable
+                    </label>
+                  </div>
+                ))}
+                <label style={S.label}>Primary key (unique ID column)</label>
+                <select style={{...S.select,width:'100%',marginBottom:16}} value={primaryKeyCol} onChange={e=>setPrimaryKeyCol(e.target.value)}>
+                  {csvHeaders.map(h=><option key={h} value={h}>{h}</option>)}
+                </select>
+                <label style={S.label}>Status field</label>
+                <select style={{...S.select,width:'100%',marginBottom:10}} value={statusFieldCol} onChange={e=>setStatusFieldCol(e.target.value)}>
+                  <option value="">(none)</option>
+                  {csvHeaders.map(h=><option key={h} value={h}>{h}</option>)}
+                </select>
+                {statusFieldCol && (
+                  <>
+                    <label style={S.label}>Active value</label>
+                    <input style={S.input} value={activeValue} onChange={e=>setActiveValue(e.target.value)} placeholder="active" />
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {step === 3 && (
+          <div>
+            {teams.map((t, i) => (
+              <div key={i} style={S.panel}>
+                <div style={S.row}>
+                  <input style={S.smallInput} value={t.label} onChange={e=>updateTeam(i,{label:e.target.value})} placeholder="Team name" />
+                  <input type="color" value={t.color} onChange={e=>updateTeam(i,{color:e.target.value})} style={{width:32,height:32,border:'none',background:'none',cursor:'pointer'}} />
+                  <span style={{color:'rgba(255,255,255,0.4)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>key: {t.key}</span>
+                  {teams.length > 1 && <button onClick={()=>removeTeam(i)} style={{...S.btnSm,background:'rgba(248,113,113,0.2)',borderColor:'rgba(248,113,113,0.4)'}}>Remove</button>}
+                </div>
+                {(t.routingRules||[]).map((r, j) => (
+                  <div key={j} style={S.row}>
+                    <select style={S.select} value={r.field} onChange={e=>updateTeamRule(i,j,{field:e.target.value})}>
+                      {fieldConfigs.map(f=><option key={f.key} value={f.key}>{f.key}</option>)}
+                    </select>
+                    <select style={S.select} value={r.op} onChange={e=>updateTeamRule(i,j,{op:e.target.value})}>
+                      <option value="=">=</option><option value="!=">!=</option><option value=">">&gt;</option><option value="<">&lt;</option><option value="in">in</option>
+                    </select>
+                    <input style={S.smallInput} value={r.value} onChange={e=>updateTeamRule(i,j,{value:e.target.value})} placeholder="value" />
+                    <button onClick={()=>removeTeamRule(i,j)} style={{...S.btnSm,background:'rgba(248,113,113,0.2)',borderColor:'rgba(248,113,113,0.4)'}}>×</button>
+                  </div>
+                ))}
+                <button onClick={()=>addTeamRule(i)} style={S.btnSm}>+ Add rule</button>
+              </div>
+            ))}
+            <button onClick={addTeam} style={{...S.btnSm,marginTop:6}}>+ Add team</button>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div>
+            {products.map((p, i) => (
+              <div key={i} style={S.panel}>
+                <div style={S.row}>
+                  <input style={{...S.smallInput,width:36,textAlign:'center'}} value={p.icon} onChange={e=>updateProduct(i,{icon:e.target.value})} />
+                  <input style={S.smallInput} value={p.label} onChange={e=>updateProduct(i,{label:e.target.value})} placeholder="Product name" />
+                  <input type="color" value={p.color} onChange={e=>updateProduct(i,{color:e.target.value})} style={{width:32,height:32,border:'none',background:'none',cursor:'pointer'}} />
+                  <select style={S.select} value={p.defaultTeam} onChange={e=>updateProduct(i,{defaultTeam:e.target.value})}>
+                    {teams.map(t=><option key={t.key} value={t.key}>{t.label}</option>)}
+                  </select>
+                  {products.length > 1 && <button onClick={()=>removeProduct(i)} style={{...S.btnSm,background:'rgba(248,113,113,0.2)',borderColor:'rgba(248,113,113,0.4)'}}>Remove</button>}
+                </div>
+                <div style={S.row}>
+                  <select style={S.select} value={p.revenue.model} onChange={e=>updateProductRevenue(i,{model:e.target.value})}>
+                    <option value="fixed">fixed</option>
+                    <option value="pct_of_field">pct_of_field</option>
+                    <option value="strategic">strategic</option>
+                  </select>
+                  {p.revenue.model === 'fixed' && (
+                    <input style={S.smallInput} type="number" value={p.revenue.annualValue||0} onChange={e=>updateProductRevenue(i,{annualValue:+e.target.value})} placeholder="Annual value" />
+                  )}
+                  {p.revenue.model === 'pct_of_field' && (
+                    <>
+                      <select style={S.select} value={p.revenue.field||''} onChange={e=>updateProductRevenue(i,{field:e.target.value})}>
+                        {fieldConfigs.filter(f=>f.type==='number').map(f=><option key={f.key} value={f.key}>{f.key}</option>)}
+                      </select>
+                      <input style={S.smallInput} type="number" step="0.01" value={p.revenue.balanceRecoveryRate??0.05} onChange={e=>updateProductRevenue(i,{balanceRecoveryRate:+e.target.value})} placeholder="rate" />
+                    </>
+                  )}
+                  {p.revenue.model === 'strategic' && (
+                    <input style={S.smallInput} type="number" value={p.revenue.annualValue||0} onChange={e=>updateProductRevenue(i,{annualValue:+e.target.value})} placeholder="Nominal value" />
+                  )}
+                </div>
+              </div>
+            ))}
+            <button onClick={addProduct} style={{...S.btnSm,marginBottom:16}}>+ Add product</button>
+
+            <div style={S.sectionLabel}>Stage probabilities</div>
+            <div style={S.row}>
+              {PIPELINE_STAGES.map(stg => (
+                <label key={stg} style={{display:'flex',flexDirection:'column',gap:4,color:'rgba(255,255,255,0.6)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>
+                  {stg}
+                  <input style={{...S.smallInput,width:60}} type="number" value={stageProbabilities[stg]} onChange={e=>setStageProbabilities(sp=>({...sp,[stg]:+e.target.value}))} />
+                </label>
+              ))}
+            </div>
+
+            <div style={{...S.sectionLabel,marginTop:14}}>Re-engagement days</div>
+            <div style={S.row}>
+              <label style={{display:'flex',flexDirection:'column',gap:4,color:'rgba(255,255,255,0.6)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>
+                Not interested
+                <input style={{...S.smallInput,width:70}} type="number" value={reEngagementDays.re_engagement_days_not_interested} onChange={e=>setReEngagementDays(r=>({...r,re_engagement_days_not_interested:+e.target.value}))} />
+              </label>
+              <label style={{display:'flex',flexDirection:'column',gap:4,color:'rgba(255,255,255,0.6)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>
+                Expired
+                <input style={{...S.smallInput,width:70}} type="number" value={reEngagementDays.re_engagement_days_expired} onChange={e=>setReEngagementDays(r=>({...r,re_engagement_days_expired:+e.target.value}))} />
+              </label>
+              <label style={{display:'flex',flexDirection:'column',gap:4,color:'rgba(255,255,255,0.6)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>
+                Expired + contacted
+                <input style={{...S.smallInput,width:70}} type="number" value={reEngagementDays.re_engagement_days_expired_contacted} onChange={e=>setReEngagementDays(r=>({...r,re_engagement_days_expired_contacted:+e.target.value}))} />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {step === 5 && (
+          <div>
+            <div style={S.sectionLabel}>Selling factors</div>
+            {sellingFactors.map((f, i) => (
+              <div key={i} style={S.panel}>
+                <div style={S.row}>
+                  <span style={{color:'rgba(255,255,255,0.5)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>IF</span>
+                  <select style={S.select} value={f.if.field} onChange={e=>updateFactorIf(i,{field:e.target.value})}>
+                    {fieldConfigs.map(fc=><option key={fc.key} value={fc.key}>{fc.key}</option>)}
+                  </select>
+                  <select style={S.select} value={f.if.op} onChange={e=>updateFactorIf(i,{op:e.target.value})}>
+                    <option value="=">=</option><option value="!=">!=</option><option value=">">&gt;</option><option value="<">&lt;</option>
+                  </select>
+                  <input style={S.smallInput} value={f.if.value} onChange={e=>updateFactorIf(i,{value:e.target.value})} placeholder="value" />
+                </div>
+                <div style={S.row}>
+                  <span style={{color:'rgba(255,255,255,0.5)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>THEN pitch</span>
+                  <select style={S.select} value={f.product} onChange={e=>updateFactor(i,{product:e.target.value})}>
+                    {products.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}
+                  </select>
+                  <select style={S.select} value={f.quality} onChange={e=>updateFactor(i,{quality:e.target.value})}>
+                    <option value="high">high</option><option value="medium">medium</option><option value="low">low</option>
+                  </select>
+                  <input style={S.smallInput} value={f.reason} onChange={e=>updateFactor(i,{reason:e.target.value})} placeholder="reason" />
+                  <button onClick={()=>removeFactor(i)} style={{...S.btnSm,background:'rgba(248,113,113,0.2)',borderColor:'rgba(248,113,113,0.4)'}}>×</button>
+                </div>
+              </div>
+            ))}
+            <button onClick={addFactor} style={{...S.btnSm,marginBottom:18}}>+ Add factor</button>
+
+            <div style={S.sectionLabel}>Lead score weights</div>
+            {leadScoreWeights.map((lw, i) => (
+              <div key={lw.field} style={S.panel}>
+                <div style={{color:'rgba(255,255,255,0.7)',fontSize:12,fontWeight:600,marginBottom:6,fontFamily:'Poppins,sans-serif'}}>{lw.field}</div>
+                {(lw.thresholds||[]).map((t, j) => (
+                  <div key={j} style={S.row}>
+                    <span style={{color:'rgba(255,255,255,0.5)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>above</span>
+                    <input style={{...S.smallInput,width:80}} type="number" value={t.above} onChange={e=>updateLeadThreshold(i,j,{above:+e.target.value})} />
+                    <span style={{color:'rgba(255,255,255,0.5)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>→</span>
+                    <input style={{...S.smallInput,width:60}} type="number" value={t.points} onChange={e=>updateLeadThreshold(i,j,{points:+e.target.value})} />
+                    <span style={{color:'rgba(255,255,255,0.5)',fontSize:11,fontFamily:'Poppins,sans-serif'}}>points</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {step === 6 && (
+          <div>
+            <div style={S.panel}>
+              <div style={{color:'rgba(255,255,255,0.8)',fontSize:13,fontFamily:'Poppins,sans-serif',display:'flex',flexDirection:'column',gap:6}}>
+                <div>🏢 Brand: <strong>{brandName || '(unnamed)'}</strong></div>
+                <div>🗂 Fields: <strong>{fieldConfigs.length}</strong></div>
+                <div>👥 Teams: <strong>{teams.length}</strong></div>
+                <div>📦 Products: <strong>{products.length}</strong></div>
+                <div>🎯 Selling factors: <strong>{sellingFactors.length}</strong></div>
+                <div>📈 Lead score rules: <strong>{leadScoreWeights.length}</strong></div>
+              </div>
+            </div>
+            <button style={{...S.btn}} onClick={handleLaunch}>Launch CRM</button>
+            <button style={{...S.btnSm,width:'100%',marginTop:10,padding:'10px 0'}} onClick={copyConfigJSON}>Copy config JSON</button>
+          </div>
+        )}
+
+        {err && <p style={S.errStyle}>{err}</p>}
+
+        <div style={{display:'flex',gap:8,marginTop:20}}>
+          {step > 1 && <button style={{...S.btn,background:'rgba(88,86,183,0.3)',marginTop:0,width:'auto',padding:'12px 24px'}} onClick={goBack}>Previous</button>}
+          {step < 6 && <button style={{...S.btn,marginTop:0,flex:1}} onClick={goNext}>Next</button>}
+        </div>
+
         <p style={{color:'rgba(255,255,255,0.25)',fontSize:11,textAlign:'center',marginTop:16,fontFamily:'Poppins,sans-serif'}}>
-          Settings stored in localStorage. Advanced config (products, fields, selling factors) can be set via <code style={{background:'rgba(122,80,247,0.2)',padding:'1px 4px',borderRadius:4}}>window.CRM_CLIENT_CONFIG</code> before page load.
+          Settings stored in localStorage{SB ? ' and Supabase' : ''}. Advanced config can also be set via <code style={{background:'rgba(122,80,247,0.2)',padding:'1px 4px',borderRadius:4}}>window.CRM_CLIENT_CONFIG</code> before page load.
         </p>
       </div>
     </div>
@@ -5006,11 +5393,22 @@ function TopNav({ country, setCountry, segment, setSegment, teamFilter, setTeamF
               }}>
               {conversionSyncing ? '⟳ Syncing…' : '⟳ Sync'}
             </button>
-            <Link to="/settings" title="Dashboard Snapshots" style={{display:'flex',alignItems:'center',justifyContent:'center',width:32,height:32,borderRadius:8,background:location.pathname.startsWith('/settings')?'#EEEDFE':'transparent',border:location.pathname.startsWith('/settings')?'0.5px solid #C4B8F7':'0.5px solid transparent',color:'#9590C0',fontSize:16,textDecoration:'none',transition:'all .15s'}}
+            <Link to="/settings" title="Analytics Settings" style={{display:'flex',alignItems:'center',justifyContent:'center',width:32,height:32,borderRadius:8,background:location.pathname.startsWith('/settings')?'#EEEDFE':'transparent',border:location.pathname.startsWith('/settings')?'0.5px solid #C4B8F7':'0.5px solid transparent',color:'#9590C0',fontSize:16,textDecoration:'none',transition:'all .15s'}}
               onMouseEnter={e=>{e.currentTarget.style.background='#EEEDFE';e.currentTarget.style.borderColor='#C4B8F7';}}
               onMouseLeave={e=>{if(!location.pathname.startsWith('/settings')){e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='transparent';}}}>
               ⚙️
             </Link>
+            <button title="Reconfigure CRM" onClick={()=>{
+                if (window.confirm('Reconfigure this CRM? This clears your saved configuration and restarts setup.')) {
+                  try { localStorage.removeItem('CRM_CLIENT_CONFIG'); } catch(e) {}
+                  window.location.reload();
+                }
+              }}
+              style={{display:'flex',alignItems:'center',justifyContent:'center',width:32,height:32,borderRadius:8,background:'transparent',border:'0.5px solid transparent',color:'#9590C0',fontSize:16,cursor:'pointer',transition:'all .15s'}}
+              onMouseEnter={e=>{e.currentTarget.style.background='#EEEDFE';e.currentTarget.style.borderColor='#C4B8F7';}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='transparent';}}>
+              🔄
+            </button>
             <NotificationBell />
             <UserAvatarMenu />
           </div>
